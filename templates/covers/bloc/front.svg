@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900">
+  <rect width="600" height="900" fill="{{C1}}"/>
+  <rect x="0" y="620" width="600" height="280" fill="{{C3}}"/>
+  <rect x="0" y="612" width="600" height="8" fill="{{C2}}"/>
+  <foreignObject x="56" y="90" width="488" height="60">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:14px; letter-spacing:.28em; text-transform:uppercase; color:{{C3}}; opacity:.85;">{{AUTHOR}}</div>
+  </foreignObject>
+  <foreignObject x="56" y="200" width="488" height="360">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Serif',Georgia,serif; font-size:62px; line-height:1.05; letter-spacing:-0.01em; color:{{C3}}; overflow-wrap:break-word;">{{TITLE}}</div>
+  </foreignObject>
+  <foreignObject x="56" y="660" width="488" height="110">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Serif',Georgia,serif; font-style:italic; font-size:26px; line-height:1.28; color:{{C2}};">{{TAGLINE}}</div>
+  </foreignObject>
+  <foreignObject x="56" y="784" width="488" height="70">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:15.5px; line-height:1.45; color:{{C4}}; opacity:.7;">{{SUBTITLE}}</div>
+  </foreignObject>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900">
+  <rect width="600" height="900" fill="{{C3}}"/>
+  <rect x="54" y="64" width="492" height="2" fill="{{C4}}"/>
+  <rect x="54" y="834" width="492" height="2" fill="{{C4}}"/>
+  <circle cx="88" cy="112" r="7" fill="{{C2}}"/>
+  <foreignObject x="54" y="96" width="492" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:13px; letter-spacing:.24em; text-transform:uppercase; color:{{C4}}; text-align:right;">{{AUTHOR}}</div>
+  </foreignObject>
+  <foreignObject x="54" y="240" width="470" height="330">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Serif',Georgia,serif; font-size:58px; line-height:1.06; letter-spacing:-0.01em; color:{{C1}}; overflow-wrap:break-word;">{{TITLE}}</div>
+  </foreignObject>
+  <rect x="54" y="586" width="88" height="4" fill="{{C2}}"/>
+  <foreignObject x="54" y="612" width="440" height="120">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Serif',Georgia,serif; font-style:italic; font-size:25px; line-height:1.3; color:{{C2}};">{{TAGLINE}}</div>
+  </foreignObject>
+  <foreignObject x="54" y="742" width="460" height="70">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:16px; line-height:1.45; color:{{C4}}; opacity:.75;">{{SUBTITLE}}</div>
+  </foreignObject>
+</svg>

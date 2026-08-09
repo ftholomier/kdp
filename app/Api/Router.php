@@ -1,0 +1,510 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Api;
+
+use App\Core\Auth;
+use App\Core\Config;
+use App\Core\Csrf;
+use App\Core\Db;
+use App\Core\Http;
+use App\Core\Util;
+use App\Services\ChapterTools;
+use App\Services\Concepts;
+use App\Services\Covers;
+use App\Services\Docx;
+use App\Services\Gemini;
+use App\Services\Kdp;
+use App\Services\Layout;
+use App\Services\Market;
+use App\Services\PdfBook;
+use App\Services\Toc;
+use App\Services\Writer;
+
+final class Router
+{
+    public static function dispatch(): void
+    {
+        $route = (string) ($_GET['r'] ?? '');
+
+        try {
+            // ── Routes publiques par jeton (userscript KDP, CORS ouvert) ──
+            if (str_starts_with($route, 'kdp/')) {
+                self::kdpTokenRoutes($route);
+            }
+
+            // ── Authentification ──
+            if ($route === 'auth/login') {
+                Http::requirePost();
+                $input = Http::input();
+                if (Auth::attempt((string) ($input['email'] ?? ''), (string) ($input['password'] ?? ''))) {
+                    Http::ok(['user' => self::publicUser(Auth::user()), 'csrf' => Csrf::token()]);
+                }
+                Http::error('Identifiants incorrects (ou trop de tentatives, patientez 5 min).', 401);
+            }
+            if ($route === 'auth/logout') {
+                Auth::logout();
+                Http::ok();
+            }
+            if ($route === 'auth/me') {
+                $user = Auth::user();
+                Http::ok(['user' => $user ? self::publicUser($user) : null, 'csrf' => $user ? Csrf::token() : null,
+                          'app' => ['name' => Config::get('app.name'), 'base_url' => Config::baseUrl()]]);
+            }
+
+            // ── Tout le reste exige la session ──
+            $user = Auth::requireUser();
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+                Csrf::check();
+            }
+
+            self::authedRoutes($route, $user);
+            Http::error('Route inconnue : ' . $route, 404);
+        } catch (\PDOException $e) {
+            error_log('[api] PDO: ' . $e->getMessage());
+            $debug = (bool) Config::get('app.debug');
+            Http::error($debug ? 'BDD : ' . $e->getMessage() : 'Erreur base de données — vérifiez config/config.php et l\'installation (setup.php).', 500);
+        } catch (\RuntimeException $e) {
+            Http::error($e->getMessage(), 502);
+        } catch (\Throwable $e) {
+            error_log('[api] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            Http::error((bool) Config::get('app.debug') ? $e->getMessage() : 'Erreur interne.', 500);
+        }
+    }
+
+    // ── Routes authentifiées ───────────────────────────────────────────────
+
+    private static function authedRoutes(string $route, array $user): void
+    {
+        $userId = (int) $user['id'];
+
+        switch ($route) {
+            // ── Projets ──
+            case 'projects/list':
+                $projects = Db::all(
+                    'SELECT p.*, c.title AS concept_title FROM projects p
+                     LEFT JOIN concepts c ON c.id = p.concept_id
+                     WHERE p.user_id = ? ORDER BY p.updated_at DESC', [$userId]
+                );
+                Http::ok(['projects' => $projects]);
+
+            case 'projects/create':
+                Http::requirePost();
+                $id = Db::insert(
+                    'INSERT INTO projects (user_id, title, created_at, updated_at) VALUES (?,?,?,?)',
+                    [$userId, 'Nouveau livre', Db::now(), Db::now()]
+                );
+                Http::ok(['project' => self::project($id, $userId)]);
+
+            case 'projects/get':
+                Http::ok(self::projectBundle((int) Http::in('id'), $userId));
+
+            case 'projects/update':
+                Http::requirePost();
+                self::updateProject((int) Http::in('id'), $userId);
+                Http::ok(['project' => self::project((int) Http::in('id'), $userId)]);
+
+            case 'projects/delete':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Db::run('DELETE FROM projects WHERE id = ?', [(int) $project['id']]);
+                Http::ok();
+
+            // ── Étape 1 : niche ──
+            case 'market/analyze':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $idea = trim((string) Http::in('idea', ''));
+                if (mb_strlen($idea) < 15) {
+                    Http::error('Décrivez votre idée en quelques lignes (15 caractères minimum).');
+                }
+                Db::run('UPDATE projects SET idea = ?, mode = \'describe\', updated_at = ? WHERE id = ?', [$idea, Db::now(), $project['id']]);
+                Http::ok(['themes' => Market::analyze($project, $idea)]);
+
+            case 'market/trends':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Db::run('UPDATE projects SET mode = \'trends\', updated_at = ? WHERE id = ?', [Db::now(), $project['id']]);
+                Http::ok(['themes' => Market::trends($project)]);
+
+            case 'themes/select':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $theme = Db::one('SELECT * FROM themes WHERE id = ? AND project_id = ?', [(int) Http::in('theme_id'), $project['id']]);
+                if (!$theme) {
+                    Http::error('Thème introuvable.');
+                }
+                Db::run('UPDATE projects SET theme_id = ?, step = GREATEST(step, 2), updated_at = ? WHERE id = ?', [$theme['id'], Db::now(), $project['id']]);
+                Http::ok(['project' => self::project((int) $project['id'], $userId)]);
+
+            // ── Étape 2 : concepts ──
+            case 'concepts/generate':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $theme = self::selectedTheme($project);
+                Http::ok(['concepts' => Concepts::generate($project, $theme)]);
+
+            case 'concepts/select':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $concept = Db::one('SELECT * FROM concepts WHERE id = ? AND project_id = ?', [(int) Http::in('concept_id'), $project['id']]);
+                if (!$concept) {
+                    Http::error('Concept introuvable.');
+                }
+                Db::run(
+                    'UPDATE projects SET concept_id = ?, title = ?, pages = ?, step = GREATEST(step, 3), updated_at = ? WHERE id = ?',
+                    [$concept['id'], $concept['title'], (int) $concept['pages_est'], Db::now(), $project['id']]
+                );
+                Http::ok(['project' => self::project((int) $project['id'], $userId)]);
+
+            // ── Étape 3 : sommaire ──
+            case 'toc/generate':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                self::updateProject((int) $project['id'], $userId); // applique pages/photos/ton/format envoyés
+                $project = self::project((int) $project['id'], $userId);
+                $concept = self::selectedConcept($project);
+                Http::ok(['toc' => Toc::generate($project, $concept), 'project' => $project]);
+
+            case 'toc/save':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $toc = Http::in('toc');
+                if (!is_array($toc)) {
+                    Http::error('Sommaire invalide.');
+                }
+                Toc::saveDraft((int) $project['id'], $toc);
+                Http::ok();
+
+            case 'toc/validate':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                self::updateProject((int) $project['id'], $userId);
+                Toc::validate(self::project((int) $project['id'], $userId));
+                Http::ok(['project' => self::project((int) $project['id'], $userId)]);
+
+            // ── Étape 4 : couverture ──
+            case 'covers/get':
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok([
+                    'cover'     => Covers::get($project, self::selectedConceptOrNull($project), $user),
+                    'templates' => Covers::templates(),
+                ]);
+
+            case 'covers/save':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Covers::get($project, self::selectedConceptOrNull($project), $user);
+                Covers::save(
+                    (int) $project['id'],
+                    (string) Http::in('template', 'editorial'),
+                    (array) Http::in('palette', []),
+                    (array) Http::in('texts', [])
+                );
+                Db::run('UPDATE projects SET updated_at = ? WHERE id = ?', [Db::now(), $project['id']]);
+                Http::ok(['cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
+
+            case 'covers/generate-back':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $concept = self::selectedConcept($project);
+                Http::ok(['generated' => Covers::generateBack($project, $concept, $user)]);
+
+            case 'covers/render':
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                header('Content-Type: image/svg+xml; charset=utf-8');
+                header('Cache-Control: no-store');
+                echo Covers::render($cover, (string) Http::in('face', 'front'));
+                exit;
+
+            case 'covers/validate':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Db::run('UPDATE projects SET step = GREATEST(step, 5), updated_at = ? WHERE id = ?', [Db::now(), $project['id']]);
+                Http::ok(['project' => self::project((int) $project['id'], $userId)]);
+
+            // ── Étape 5 : rédaction ──
+            case 'write/start':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Writer::start($project);
+                Http::ok(['status' => Writer::status(self::project((int) $project['id'], $userId))]);
+
+            case 'write/pause':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Writer::pause($project);
+                Http::ok(['status' => Writer::status(self::project((int) $project['id'], $userId))]);
+
+            case 'write/tick':
+                Http::requirePost();
+                @set_time_limit((int) Config::get('gemini.timeout', 180) + 30);
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['status' => Writer::tick($project, self::selectedConceptOrNull($project))]);
+
+            case 'write/status':
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok([
+                    'status'  => Writer::status($project),
+                    'journal' => Writer::journalSince((int) $project['id'], (int) Http::in('after', 0)),
+                ]);
+
+            // ── Étape 6 : chapitres ──
+            case 'chapters/get':
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(ChapterTools::chapter((int) $project['id'], (int) Http::in('num', 1)));
+
+            case 'chapters/action':
+                Http::requirePost();
+                @set_time_limit((int) Config::get('gemini.timeout', 180) * 3 + 30);
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(ChapterTools::action(
+                    $project,
+                    (int) Http::in('num', 1),
+                    (string) Http::in('action', ''),
+                    (string) Http::in('param', '')
+                ));
+
+            // ── Visuels ──
+            case 'images/upload':
+                self::uploadImage($userId);
+
+            // ── Étape 7 : mise en page & publication ──
+            case 'layout/summary':
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(Layout::summary($project, self::selectedConceptOrNull($project)));
+
+            case 'export/pdf':
+                @set_time_limit(300);
+                $project = self::project((int) Http::in('id'), $userId);
+                $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
+                $file = PdfBook::build($project, $book);
+                self::download($file, Util::slug($book['title']) . '-interieur.pdf', 'application/pdf');
+
+            case 'export/docx':
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
+                $file = Docx::build($project, $book);
+                self::download($file, Util::slug($book['title']) . '-manuscrit.docx',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+
+            case 'kdpmeta/get':
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['meta' => Kdp::meta((int) $project['id'])]);
+
+            case 'kdpmeta/generate':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['meta' => Kdp::generate($project, self::selectedConcept($project), $user)]);
+
+            case 'kdpmeta/save':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['meta' => Kdp::save((int) $project['id'], Http::input())]);
+
+            case 'tokens/list':
+                Http::ok(['tokens' => Kdp::tokens($userId)]);
+
+            case 'tokens/create':
+                Http::requirePost();
+                Http::ok(Kdp::createToken($userId, (string) Http::in('label', '')));
+
+            case 'tokens/revoke':
+                Http::requirePost();
+                Kdp::revokeToken($userId, (int) Http::in('token_id'));
+                Http::ok();
+        }
+    }
+
+    // ── Routes à jeton pour le userscript (CORS) ───────────────────────────
+
+    private static function kdpTokenRoutes(string $route): void
+    {
+        Http::cors();
+        $user = Auth::userByToken((string) ($_GET['token'] ?? ''));
+        if (!$user) {
+            Http::error('Jeton d\'API invalide.', 401);
+        }
+        $userId = (int) $user['id'];
+
+        if ($route === 'kdp/projects') {
+            $projects = Db::all(
+                "SELECT p.id, p.title, p.writing_status, p.updated_at FROM projects p
+                 WHERE p.user_id = ? ORDER BY p.updated_at DESC LIMIT 50", [$userId]
+            );
+            Http::ok(['projects' => $projects]);
+        }
+        if ($route === 'kdp/payload') {
+            $project = self::project((int) ($_GET['project'] ?? 0), $userId);
+            Http::ok(['payload' => Kdp::payload($project, self::selectedConceptOrNull($project))]);
+        }
+        Http::error('Route inconnue.', 404);
+    }
+
+    // ── Aides ──────────────────────────────────────────────────────────────
+
+    private static function project(int $id, int $userId): array
+    {
+        $project = Db::one('SELECT * FROM projects WHERE id = ? AND user_id = ?', [$id, $userId]);
+        if (!$project) {
+            Http::error('Projet introuvable.', 404);
+        }
+        return $project;
+    }
+
+    private static function projectBundle(int $id, int $userId): array
+    {
+        $project = self::project($id, $userId);
+        $projectId = (int) $project['id'];
+        return [
+            'project'  => $project,
+            'themes'   => [
+                'analysis' => Market::listFor($projectId, 'analysis'),
+                'trends'   => Market::listFor($projectId, 'trends'),
+            ],
+            'concepts' => Concepts::listFor($projectId),
+            'toc'      => Toc::draft($project),
+            'trims'    => Config::get('trims'),
+        ];
+    }
+
+    private static function updateProject(int $id, int $userId): void
+    {
+        $project = self::project($id, $userId);
+        $input = Http::input();
+        $fields = [];
+        $params = [];
+
+        $map = [
+            'title'       => fn ($v) => mb_substr(trim((string) $v), 0, 250),
+            'step'        => fn ($v) => max(1, min(7, (int) $v)),
+            'mode'        => fn ($v) => in_array($v, ['describe', 'trends'], true) ? $v : 'describe',
+            'idea'        => fn ($v) => (string) $v,
+            'pages'       => fn ($v) => max(60, min(400, (int) $v)),
+            'photos'      => fn ($v) => $v ? 1 : 0,
+            'photos_per'  => fn ($v) => max(1, min(6, (int) $v)),
+            'photo_style' => fn ($v) => in_array($v, ['nb', 'couleur', 'schemas'], true) ? $v : 'nb',
+            'tone'        => fn ($v) => mb_substr(trim((string) $v), 0, 50),
+            'trim_format' => fn ($v) => Config::get('trims.' . $v) ? $v : '6x9',
+        ];
+        foreach ($map as $key => $clean) {
+            if (array_key_exists($key, $input)) {
+                $fields[] = "$key = ?";
+                $params[] = $clean($input[$key]);
+            }
+        }
+        if (!$fields) {
+            return;
+        }
+        $params[] = Db::now();
+        $params[] = $project['id'];
+        Db::run('UPDATE projects SET ' . implode(', ', $fields) . ', updated_at = ? WHERE id = ?', $params);
+    }
+
+    private static function selectedTheme(array $project): array
+    {
+        $theme = $project['theme_id']
+            ? Db::one('SELECT * FROM themes WHERE id = ? AND project_id = ?', [(int) $project['theme_id'], (int) $project['id']])
+            : null;
+        if (!$theme) {
+            Http::error('Sélectionnez d\'abord une thématique (étape 1).');
+        }
+        return $theme;
+    }
+
+    private static function selectedConcept(array $project): array
+    {
+        $concept = self::selectedConceptOrNull($project);
+        if (!$concept) {
+            Http::error('Sélectionnez d\'abord un livre (étape 2).');
+        }
+        return $concept;
+    }
+
+    private static function selectedConceptOrNull(array $project): ?array
+    {
+        return $project['concept_id']
+            ? Db::one('SELECT * FROM concepts WHERE id = ? AND project_id = ?', [(int) $project['concept_id'], (int) $project['id']])
+            : null;
+    }
+
+    private static function uploadImage(int $userId): void
+    {
+        Http::requirePost();
+        $project = self::project((int) ($_POST['id'] ?? 0), $userId);
+        $imageId = (int) ($_POST['image_id'] ?? 0);
+        $slotRow = Db::one('SELECT * FROM images WHERE id = ? AND project_id = ?', [$imageId, (int) $project['id']]);
+        if (!$slotRow) {
+            Http::error('Emplacement visuel introuvable.');
+        }
+        $file = $_FILES['file'] ?? null;
+        if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            Http::error('Fichier manquant ou refusé par le serveur.');
+        }
+        $info = @getimagesize($file['tmp_name']);
+        if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
+            Http::error('Format accepté : JPEG, PNG ou WebP.');
+        }
+
+        $dir = (string) Config::get('paths.uploads');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        // Conversion en JPEG qualité maximale (incorporation PDF + poids maîtrisé)
+        $source = match ($info[2]) {
+            IMAGETYPE_JPEG => imagecreatefromjpeg($file['tmp_name']),
+            IMAGETYPE_PNG  => imagecreatefrompng($file['tmp_name']),
+            IMAGETYPE_WEBP => imagecreatefromwebp($file['tmp_name']),
+        };
+        if (!$source) {
+            Http::error('Image illisible.');
+        }
+        $name = 'p' . $project['id'] . '-img' . $imageId . '-' . substr(bin2hex(random_bytes(6)), 0, 8) . '.jpg';
+        $canvas = imagecreatetruecolor(imagesx($source), imagesy($source));
+        imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
+        imagecopy($canvas, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
+        imagejpeg($canvas, $dir . '/' . $name, 92);
+        imagedestroy($source);
+        imagedestroy($canvas);
+
+        if (!empty($slotRow['filename']) && is_file($dir . '/' . $slotRow['filename'])) {
+            @unlink($dir . '/' . $slotRow['filename']);
+        }
+        Db::run('UPDATE images SET filename = ?, width = ?, height = ? WHERE id = ?', [$name, $info[0], $info[1], $imageId]);
+        Http::ok(['image' => Db::one('SELECT * FROM images WHERE id = ?', [$imageId])]);
+    }
+
+    private static function download(string $file, string $downloadName, string $mime): never
+    {
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: attachment; filename="' . $downloadName . '"');
+        header('Content-Length: ' . (string) filesize($file));
+        header('Cache-Control: no-store');
+        readfile($file);
+        exit;
+    }
+
+    private static function publicUser(array $user): array
+    {
+        return [
+            'id'           => (int) $user['id'],
+            'email'        => $user['email'],
+            'display_name' => $user['display_name'],
+            'initials'     => self::initials($user['display_name'] ?: $user['email']),
+        ];
+    }
+
+    private static function initials(string $name): string
+    {
+        $parts = preg_split('/[\s.@_-]+/u', trim($name)) ?: [];
+        $initials = '';
+        foreach ($parts as $part) {
+            if ($part !== '' && mb_strlen($initials) < 2) {
+                $initials .= mb_strtoupper(mb_substr($part, 0, 1));
+            }
+        }
+        return $initials ?: 'AU';
+    }
+}

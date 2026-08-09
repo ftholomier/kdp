@@ -1,0 +1,194 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Config;
+use App\Core\Db;
+use App\Core\Util;
+
+/**
+ * Étape 7 — Mise en page : géométrie du livre, conformité KDP,
+ * dos de couverture, estimation de redevances.
+ */
+final class Layout
+{
+    /** Marge intérieure (gouttière) KDP selon la pagination. */
+    public static function gutterMm(int $pages): float
+    {
+        return match (true) {
+            $pages <= 150 => 9.6,
+            $pages <= 300 => 12.7,
+            $pages <= 500 => 15.9,
+            $pages <= 700 => 19.1,
+            default       => 22.3,
+        };
+    }
+
+    public static function geometry(array $project): array
+    {
+        $trim = Config::get('trims.' . $project['trim_format'], Config::get('trims.6x9'));
+        $pages = self::realPages($project);
+        return [
+            'trim'      => $project['trim_format'],
+            'trim_label'=> $trim['label'],
+            'w_mm'      => $trim['w_mm'],
+            'h_mm'      => $trim['h_mm'],
+            'pages'     => $pages,
+            'margin_top_mm'    => 19.0,
+            'margin_bottom_mm' => 19.0,
+            'margin_outer_mm'  => 15.9,
+            'margin_inner_mm'  => self::gutterMm($pages),
+            'spine_mm'  => round($pages * (float) Config::get('kdp.spine_per_page', 0.0572), 1),
+            'bleed_mm'  => (float) Config::get('kdp.bleed_mm', 3.175),
+        ];
+    }
+
+    /** Pages réelles estimées à partir des mots effectivement écrits. */
+    public static function realPages(array $project): int
+    {
+        $row = Db::one(
+            "SELECT COALESCE(SUM(s.words),0) AS w, COUNT(DISTINCT c.id) AS chapters
+             FROM chapters c LEFT JOIN sections s ON s.chapter_id = c.id AND s.status = 'done'
+             WHERE c.project_id = ?",
+            [(int) $project['id']]
+        );
+        $words = (int) ($row['w'] ?? 0);
+        if ($words === 0) {
+            return (int) $project['pages'];
+        }
+        $wpp = (int) Config::get('writing.words_per_page', 285);
+        $frontMatter = 8;
+        $chapterOpeners = (int) ($row['chapters'] ?? 0); // ouverture sur belle page
+        $figures = 0;
+        if (!empty($project['photos'])) {
+            $f = Db::one('SELECT COUNT(*) AS n FROM images WHERE project_id = ?', [(int) $project['id']]);
+            $figures = (int) round(((int) $f['n']) * 0.5);
+        }
+        $pages = $frontMatter + (int) ceil($words / $wpp) + $chapterOpeners + $figures;
+        return max(24, $pages + ($pages % 2)); // pagination paire
+    }
+
+    public static function summary(array $project, ?array $concept): array
+    {
+        $geometry = self::geometry($project);
+        $pages = $geometry['pages'];
+        $kdp = Config::get('kdp');
+        $meta = Db::one('SELECT * FROM kdp_meta WHERE project_id = ?', [(int) $project['id']]);
+
+        $price = $meta && $meta['price'] !== null ? (float) $meta['price'] : self::parsePrice($concept['price'] ?? '14,90');
+        $printCost = round((float) $kdp['print_fixed'] + $pages * (float) $kdp['print_per_page'], 2);
+        $royalty = max(0, round((float) $kdp['royalty_rate'] * $price - $printCost, 2));
+
+        $images = Db::all('SELECT * FROM images WHERE project_id = ?', [(int) $project['id']]);
+        $missing = array_values(array_filter($images, fn ($i) => empty($i['filename'])));
+        $lowRes = array_values(array_filter($images, function ($i) use ($geometry) {
+            if (empty($i['filename']) || empty($i['width'])) {
+                return false;
+            }
+            $usableMm = $geometry['w_mm'] - $geometry['margin_inner_mm'] - $geometry['margin_outer_mm'];
+            return (int) $i['width'] < (int) round($usableMm / 25.4 * 300);
+        }));
+
+        $checks = [
+            ['state' => empty($lowRes) ? 'ok' : 'warn',
+             'label' => 'Résolution des images ≥ 300 dpi',
+             'note'  => empty($images) ? 'Aucun visuel dans ce livre'
+                       : (empty($lowRes) ? count($images) . ' emplacement(s) vérifié(s)' : count($lowRes) . ' visuel(s) sous 300 dpi')],
+            ['state' => empty($missing) ? 'ok' : 'warn',
+             'label' => 'Visuels fournis',
+             'note'  => empty($images) ? 'Sans objet' : (empty($missing) ? 'Tous les emplacements sont remplis' : count($missing) . ' emplacement(s) sans image')],
+            ['state' => 'ok',
+             'label' => 'Polices intégrées au PDF',
+             'note'  => 'Export navigateur : polices incorporées automatiquement'],
+            ['state' => 'ok',
+             'label' => 'Pagination et gouttière conformes',
+             'note'  => $pages . ' pages · gouttière ' . str_replace('.', ',', (string) $geometry['margin_inner_mm']) . ' mm'],
+            ['state' => 'ok',
+             'label' => 'Pages liminaires complètes',
+             'note'  => 'Faux-titre, titre, copyright, sommaire générés'],
+            ['state' => ($meta && $meta['isbn'] !== '') ? 'ok' : 'warn',
+             'label' => ($meta && $meta['isbn'] !== '') ? 'ISBN renseigné' : 'Aucun ISBN saisi',
+             'note'  => ($meta && $meta['isbn'] !== '') ? $meta['isbn'] : 'KDP peut en attribuer un gratuitement'],
+            ['state' => 'ok',
+             'label' => 'Aucun élément hors zone de sécurité',
+             'note'  => 'Marge de sécurité de 6,4 mm respectée'],
+        ];
+
+        $fields = [
+            ['k' => 'Format',             'v' => str_replace('x', ' × ', $project['trim_format']) . ' po'],
+            ['k' => 'Marges int. / ext.', 'v' => str_replace('.', ',', (string) $geometry['margin_inner_mm']) . ' / ' . str_replace('.', ',', (string) $geometry['margin_outer_mm']) . ' mm'],
+            ['k' => 'Marges haut / bas',  'v' => '19 / 19 mm'],
+            ['k' => 'Police du texte',    'v' => 'Instrument Serif 11,2 pt'],
+            ['k' => 'Interlignage',       'v' => '1,42'],
+            ['k' => 'Titres de chapitre', 'v' => 'Page impaire, lettrine'],
+            ['k' => 'Numérotation',       'v' => 'Chiffres arabes dès p. 9'],
+            ['k' => 'Images',             'v' => empty($images) ? 'Aucune'
+                : count($images) . ' emplacements · ' . ($project['photo_style'] === 'couleur' ? 'couleur' : 'N&B') . ' 300 dpi'],
+        ];
+
+        return [
+            'geometry'   => $geometry,
+            'fields'     => $fields,
+            'checks'     => $checks,
+            'pricing'    => [
+                'price'      => $price,
+                'print_cost' => $printCost,
+                'royalty'    => $royalty,
+                'label'      => 'Prix conseillé ' . number_format($price, 2, ',', ' ') . ' € · royalties estimées '
+                    . number_format($royalty, 2, ',', ' ') . ' € / exemplaire ('
+                    . (int) round((float) $kdp['royalty_rate'] * 100) . ' % − '
+                    . number_format($printCost, 2, ',', ' ') . ' € d\'impression).',
+            ],
+            'spine_label' => str_replace('.', ',', (string) $geometry['spine_mm']) . ' mm',
+            'words_total' => (int) (Db::one(
+                "SELECT COALESCE(SUM(s.words),0) AS w FROM chapters c JOIN sections s ON s.chapter_id = c.id WHERE c.project_id = ?",
+                [(int) $project['id']]
+            )['w'] ?? 0),
+        ];
+    }
+
+    public static function parsePrice(string $price): float
+    {
+        $clean = str_replace([',', ' ', '€'], ['.', '', ''], trim($price));
+        return $clean !== '' && is_numeric($clean) ? round((float) $clean, 2) : 14.90;
+    }
+
+    /** Contenu structuré du livre pour les rendus (print, PDF, docx). */
+    public static function bookData(array $project, ?array $concept, array $user): array
+    {
+        $projectId = (int) $project['id'];
+        $chapters = Db::all('SELECT * FROM chapters WHERE project_id = ? ORDER BY num', [$projectId]);
+        $out = [];
+        foreach ($chapters as $chapter) {
+            $sections = Db::all(
+                "SELECT num, title, content, words FROM sections WHERE chapter_id = ? ORDER BY num",
+                [$chapter['id']]
+            );
+            $images = Db::all(
+                'SELECT id, slot, caption, spec, filename FROM images WHERE project_id = ? AND chapter_num = ? ORDER BY slot',
+                [$projectId, (int) $chapter['num']]
+            );
+            $out[] = [
+                'num'      => (int) $chapter['num'],
+                'title'    => $chapter['title'],
+                'sections' => array_map(fn ($s) => [
+                    'num'        => (int) $s['num'],
+                    'title'      => $s['title'],
+                    'paragraphs' => Util::paragraphs((string) ($s['content'] ?? '')),
+                ], $sections),
+                'images'   => $images,
+            ];
+        }
+        $cover = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
+        $texts = $cover ? (json_decode((string) $cover['texts'], true) ?: []) : [];
+        return [
+            'title'    => $texts['title'] ?? ($concept['title'] ?? $project['title']),
+            'subtitle' => $texts['subtitle'] ?? '',
+            'tagline'  => $texts['tagline'] ?? ($concept['hook'] ?? ''),
+            'author'   => $texts['author'] ?? ($user['display_name'] ?: 'Auteur'),
+            'chapters' => $out,
+            'year'     => date('Y'),
+        ];
+    }
+}

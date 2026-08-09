@@ -1,0 +1,166 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Config;
+use App\Core\Db;
+
+/**
+ * Étape 4 — Couverture : 1ère et 4ème de couverture en flat design.
+ *
+ * Les gabarits vivent dans templates/covers/<slug>/ :
+ *   - meta.json  : {"name":"...", "palette":{"c1":"#…","c2":"#…","c3":"#…","c4":"#…"}}
+ *   - front.svg  : 1ère de couverture, jetons {{TITLE}} {{SUBTITLE}} {{TAGLINE}} {{AUTHOR}} {{C1}}..{{C4}}
+ *   - back.svg   : 4ème de couverture, jetons {{BACK_TEXT}} {{BIO}} {{TAGLINE}} {{AUTHOR}} {{TITLE}} {{C1}}..{{C4}}
+ *
+ * Déposez vos propres modèles (flat design) dans un nouveau dossier :
+ * ils apparaissent automatiquement dans l'interface et sont respectés tels quels.
+ */
+final class Covers
+{
+    public static function templates(): array
+    {
+        $dir = (string) Config::get('paths.cover_templates');
+        $out = [];
+        foreach (glob($dir . '/*', GLOB_ONLYDIR) ?: [] as $path) {
+            $slug = basename($path);
+            if (!is_file($path . '/front.svg') || !is_file($path . '/back.svg')) {
+                continue;
+            }
+            $meta = json_decode((string) @file_get_contents($path . '/meta.json'), true) ?: [];
+            $out[] = [
+                'slug'    => $slug,
+                'name'    => $meta['name'] ?? ucfirst($slug),
+                'palette' => $meta['palette'] ?? ['c1' => '#1B2A4A', 'c2' => '#C4571F', 'c3' => '#F4EFE4', 'c4' => '#1A1A17'],
+            ];
+        }
+        usort($out, fn ($a, $b) => strcmp($a['slug'], $b['slug']));
+        return $out;
+    }
+
+    /** Charge (ou initialise) la couverture d'un projet. */
+    public static function get(array $project, ?array $concept, array $user): array
+    {
+        $projectId = (int) $project['id'];
+        $row = Db::one('SELECT * FROM covers WHERE project_id = ?', [$projectId]);
+        if (!$row) {
+            $templates = self::templates();
+            $template = $templates[0]['slug'] ?? 'editorial';
+            $palette = $templates[0]['palette'] ?? ['c1' => '#1B2A4A', 'c2' => '#C4571F', 'c3' => '#F4EFE4', 'c4' => '#1A1A17'];
+            $texts = [
+                'title'     => $concept['title'] ?? $project['title'],
+                'subtitle'  => $concept['description'] ? self::firstSentence((string) $concept['description']) : '',
+                'tagline'   => $concept['hook'] ?? '',
+                'author'    => $user['display_name'] ?: 'Auteur',
+                'back_text' => '',
+                'bio'       => '',
+            ];
+            Db::run(
+                'INSERT INTO covers (project_id, template, palette, texts, updated_at) VALUES (?,?,?,?,?)',
+                [$projectId, $template, json_encode($palette, JSON_UNESCAPED_UNICODE), json_encode($texts, JSON_UNESCAPED_UNICODE), Db::now()]
+            );
+            $row = Db::one('SELECT * FROM covers WHERE project_id = ?', [$projectId]);
+        }
+        $row['palette'] = json_decode((string) $row['palette'], true) ?: [];
+        $row['texts'] = json_decode((string) $row['texts'], true) ?: [];
+        return $row;
+    }
+
+    public static function save(int $projectId, string $template, array $palette, array $texts): void
+    {
+        $clean = [];
+        foreach (['c1', 'c2', 'c3', 'c4'] as $key) {
+            $value = (string) ($palette[$key] ?? '');
+            $clean[$key] = preg_match('/^#[0-9a-fA-F]{3,8}$/', $value) ? $value : '#1B2A4A';
+        }
+        $textsClean = [];
+        foreach (['title', 'subtitle', 'tagline', 'author', 'back_text', 'bio'] as $key) {
+            $textsClean[$key] = mb_substr(trim((string) ($texts[$key] ?? '')), 0, $key === 'back_text' ? 1500 : 300);
+        }
+        Db::run(
+            'UPDATE covers SET template = ?, palette = ?, texts = ?, updated_at = ? WHERE project_id = ?',
+            [
+                preg_replace('/[^a-z0-9_-]/i', '', $template) ?: 'editorial',
+                json_encode($clean, JSON_UNESCAPED_UNICODE),
+                json_encode($textsClean, JSON_UNESCAPED_UNICODE),
+                Db::now(),
+                $projectId,
+            ]
+        );
+    }
+
+    /** Texte de 4ème de couverture + accroche + bio générés par Gemini. */
+    public static function generateBack(array $project, array $concept, array $user): array
+    {
+        $prompt = "Tu es copywriter éditorial. Rédige les textes de couverture d'un livre pratique français "
+            . "destiné à Amazon KDP.\n"
+            . "Titre : « {$concept['title']} »\nAccroche existante : « {$concept['hook']} »\n"
+            . "Promesse : {$concept['description']}\nTon : {$project['tone']}.\n\n"
+            . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
+            . '{"tagline":"...","back_text":"...","bio":"..."}' . "\n"
+            . "Contraintes :\n"
+            . "- \"tagline\" : accroche de 1ère de couverture, une phrase percutante (max 80 caractères) ;\n"
+            . "- \"back_text\" : 4ème de couverture, 3 courts paragraphes séparés par \\n\\n : le problème vécu "
+            . "par le lecteur, la promesse du livre, ce qu'il contient concrètement (3 puces « • » possibles). "
+            . "120 à 170 mots, vendeur mais crédible ;\n"
+            . "- \"bio\" : notice auteur de 2 phrases à la 3ème personne pour « " . ($user['display_name'] ?: 'l\'auteur') . " ».";
+
+        $data = Gemini::json($prompt, [
+            'model'       => 'fast',
+            'temperature' => 0.9,
+            'search'      => false,
+            'system'      => 'Tu écris des textes de couverture qui vendent, en français impeccable.',
+        ]);
+
+        return [
+            'tagline'   => mb_substr(trim((string) ($data['tagline'] ?? '')), 0, 300),
+            'back_text' => mb_substr(trim((string) ($data['back_text'] ?? '')), 0, 1500),
+            'bio'       => mb_substr(trim((string) ($data['bio'] ?? '')), 0, 300),
+        ];
+    }
+
+    /** Rend le SVG d'une face avec les jetons remplacés. */
+    public static function render(array $cover, string $face): string
+    {
+        $face = $face === 'back' ? 'back' : 'front';
+        $dir = (string) Config::get('paths.cover_templates');
+        $file = $dir . '/' . $cover['template'] . '/' . $face . '.svg';
+        if (!is_file($file)) {
+            $fallback = self::templates()[0]['slug'] ?? null;
+            $file = $fallback ? $dir . '/' . $fallback . '/' . $face . '.svg' : null;
+        }
+        if (!$file || !is_file($file)) {
+            throw new \RuntimeException('Gabarit de couverture introuvable.');
+        }
+        $svg = (string) file_get_contents($file);
+
+        $texts = $cover['texts'];
+        $palette = $cover['palette'];
+        $esc = fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $backHtml = '';
+        foreach (preg_split('/\n\s*\n/', (string) ($texts['back_text'] ?? '')) ?: [] as $paragraph) {
+            $backHtml .= '<p>' . nl2br($esc(trim($paragraph))) . '</p>';
+        }
+
+        $replacements = [
+            '{{TITLE}}'     => $esc((string) ($texts['title'] ?? '')),
+            '{{SUBTITLE}}'  => $esc((string) ($texts['subtitle'] ?? '')),
+            '{{TAGLINE}}'   => $esc((string) ($texts['tagline'] ?? '')),
+            '{{AUTHOR}}'    => $esc((string) ($texts['author'] ?? '')),
+            '{{BIO}}'       => $esc((string) ($texts['bio'] ?? '')),
+            '{{BACK_TEXT}}' => $backHtml,
+            '{{C1}}'        => $esc((string) ($palette['c1'] ?? '#1B2A4A')),
+            '{{C2}}'        => $esc((string) ($palette['c2'] ?? '#C4571F')),
+            '{{C3}}'        => $esc((string) ($palette['c3'] ?? '#F4EFE4')),
+            '{{C4}}'        => $esc((string) ($palette['c4'] ?? '#1A1A17')),
+        ];
+        return strtr($svg, $replacements);
+    }
+
+    private static function firstSentence(string $text): string
+    {
+        $parts = preg_split('/(?<=[.!?])\s+/u', trim($text), 2) ?: [trim($text)];
+        return mb_substr($parts[0], 0, 140);
+    }
+}

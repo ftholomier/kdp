@@ -1,0 +1,11 @@
+/config/config.local.php
+/storage/logs/*
+/storage/exports/*
+/storage/uploads/*
+/storage/cache/*
+!/storage/logs/.gitkeep
+!/storage/exports/.gitkeep
+!/storage/uploads/.gitkeep
+!/storage/cache/.gitkeep
+.DS_Store
+Thumbs.db

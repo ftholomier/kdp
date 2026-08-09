@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900">
+  <style>p { margin: 0 0 14px; }</style>
+  <rect width="600" height="900" fill="{{C1}}"/>
+  <circle cx="120" cy="96" r="58" fill="{{C2}}"/>
+  <rect x="470" y="0" width="130" height="14" fill="{{C4}}"/>
+  <foreignObject x="220" y="66" width="330" height="100">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Serif',Georgia,serif; font-style:italic; font-size:23px; line-height:1.28; color:{{C3}};">{{TAGLINE}}</div>
+  </foreignObject>
+  <foreignObject x="56" y="216" width="488" height="420">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:16.5px; line-height:1.55; color:{{C3}};">{{BACK_TEXT}}</div>
+  </foreignObject>
+  <circle cx="76" cy="682" r="12" fill="{{C2}}"/>
+  <foreignObject x="104" y="664" width="440" height="96">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Instrument Sans',sans-serif; font-size:13.5px; line-height:1.5; color:{{C3}}; opacity:.82;">{{BIO}}</div>
+  </foreignObject>
+</svg>

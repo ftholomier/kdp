@@ -27,9 +27,17 @@ SPEC;
 
     public static function analyze(array $project, string $idea): array
     {
+        // Connecteur Canopy : vraies données Amazon injectées dans l'analyse
+        [$realData, $grounded] = self::realMarketData($idea);
+
         $prompt = "Tu es analyste du marché de l'autoédition Amazon KDP France (Amazon.fr). "
             . "Un auteur décrit son idée de livre :\n\n« " . trim($idea) . " »\n\n"
-            . "En t'appuyant sur les tendances de vente actuelles d'Amazon.fr (best-sellers, "
+            . ($realData !== ''
+                ? "DONNÉES RÉELLES AMAZON (extraites à l'instant via API — à utiliser en PRIORITÉ pour "
+                . "les scores, prix médians et niveaux de concurrence) :\n" . $realData . "\n"
+                : '')
+            . "En t'appuyant " . ($realData !== '' ? "d'abord sur ces données réelles, puis " : '')
+            . "sur les tendances de vente actuelles d'Amazon.fr (best-sellers, "
             . "volumes de recherche, nouveautés, avis négatifs des livres existants), propose les "
             . "6 thématiques de livre les PLUS VENDEUSES qui confrontent cette idée au marché : "
             . "des angles précis, différenciants, réalistes pour un auteur indépendant.\n"
@@ -42,7 +50,44 @@ SPEC;
             'system'      => "Tu produis des analyses marché fiables et actuelles pour Amazon.fr. Réponse en français.",
         ]);
 
-        return self::store((int) $project['id'], 'analysis', $data);
+        return ['themes' => self::store((int) $project['id'], 'analysis', $data), 'grounded' => $grounded];
+    }
+
+    /**
+     * Données réelles Amazon via Canopy : jusqu'à N recherches (mots-clés
+     * dérivés de l'idée par Gemini), résumées pour le prompt d'analyse.
+     * @return array{0:string,1:bool} texte formaté, ancrage réel effectif
+     */
+    private static function realMarketData(string $idea): array
+    {
+        if (!Canopy::enabled()) {
+            return ['', false];
+        }
+        try {
+            $max = max(1, min(4, (int) Config::get('canopy.searches_per_analysis', 2)));
+            $data = Gemini::json(
+                "Donne les requêtes de recherche Amazon.fr les plus pertinentes (2 à 4 mots chacune) "
+                . "pour étudier le marché de cette idée de livre :\n« " . trim($idea) . " »\n"
+                . "Réponds UNIQUEMENT en JSON : {\"terms\":[\"...\",\"...\"]} avec exactement {$max} requêtes.",
+                ['model' => 'fast', 'temperature' => 0.4, 'search' => false]
+            );
+            $terms = array_slice(array_values(array_filter(array_map(
+                fn ($t) => mb_substr(trim((string) $t), 0, 80),
+                (array) ($data['terms'] ?? [])
+            ), fn ($t) => $t !== '')), 0, $max);
+
+            $formatted = '';
+            foreach ($terms as $term) {
+                $snapshot = Canopy::marketSnapshot($term);
+                if ($snapshot) {
+                    $formatted .= Canopy::formatSnapshot($snapshot) . "\n";
+                }
+            }
+            return [$formatted, $formatted !== ''];
+        } catch (\Throwable $e) {
+            error_log('[canopy] analyse : ' . $e->getMessage());
+            return ['', false];
+        }
     }
 
     public static function trends(array $project): array
@@ -63,7 +108,7 @@ SPEC;
             'system'      => "Tu produis des analyses marché fiables et actuelles pour Amazon.fr. Réponse en français.",
         ]);
 
-        return self::store((int) $project['id'], 'trends', $data);
+        return ['themes' => self::store((int) $project['id'], 'trends', $data), 'grounded' => false];
     }
 
     public static function listFor(int $projectId, string $source): array

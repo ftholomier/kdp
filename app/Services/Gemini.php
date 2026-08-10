@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Config;
+use App\Core\Settings;
 use App\Core\Util;
 
 /**
@@ -21,15 +22,16 @@ final class Gemini
     public static function text(string $prompt, array $opts = []): string
     {
         $cfg = Config::get('gemini');
-        if (empty($cfg['api_key'])) {
-            throw new \RuntimeException("Clé API Gemini absente : renseignez gemini.api_key dans config/config.php.");
+        $apiKey = trim((string) Settings::get('gemini.api_key', ''));
+        if ($apiKey === '') {
+            throw new \RuntimeException("Clé API Gemini absente : collez-la dans Connecteurs (icône ⚡ en haut à droite) ou dans config/config.php.");
         }
 
         $model = $opts['model'] ?? 'fast';
         if ($model === 'fast') {
-            $model = $cfg['model_fast'];
+            $model = (string) Settings::get('gemini.model_fast', $cfg['model_fast']);
         } elseif ($model === 'pro') {
-            $model = $cfg['model_pro'];
+            $model = (string) Settings::get('gemini.model_pro', $cfg['model_pro']);
         }
 
         $generation = [
@@ -55,7 +57,7 @@ final class Gemini
         }
 
         $url = rtrim($cfg['endpoint'], '/') . '/models/' . rawurlencode($model)
-             . ':generateContent?key=' . rawurlencode($cfg['api_key']);
+             . ':generateContent?key=' . rawurlencode($apiKey);
 
         $payload = json_encode($body, JSON_UNESCAPED_UNICODE);
         $retries = max(0, (int) ($cfg['max_retries'] ?? 2));

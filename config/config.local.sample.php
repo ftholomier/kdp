@@ -18,4 +18,7 @@ return [
     'gemini' => [
         'api_key' => 'VOTRE_CLE_API_GEMINI',
     ],
+    'canopy' => [
+        'api_key' => 'VOTRE_CLE_API_CANOPY', // optionnel — vraies données Amazon
+    ],
 ];

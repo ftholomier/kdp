@@ -60,6 +60,23 @@ return [
         'use_google_search'   => true,
     ],
 
+    // ── Canopy API : vraies données Amazon (https://www.canopyapi.co) ──────
+    // Optionnel. Avec une clé (offre gratuite disponible), l'analyse de niche
+    // (étape 1) et les concepts (étape 2) s'appuient sur les résultats réels
+    // d'Amazon : titres du top, prix, notes, volume d'avis. Sans clé ou en cas
+    // d'erreur/quota, l'application retombe automatiquement sur Gemini seul.
+    'canopy' => [
+        // Clé API : https://www.canopyapi.co (Dashboard après inscription)
+        'api_key'        => '',
+        'endpoint'       => 'https://graphql.canopyapi.co/',
+        'domain'         => 'FR',        // place de marché Amazon : FR, US, DE, ES, IT, UK…
+        'timeout'        => 30,          // secondes par appel
+        // Économie de crédits (offre gratuite ≈ 100 requêtes/mois) :
+        'cache_ttl'      => 604800,      // une même recherche = 1 crédit / 7 jours
+        'monthly_budget' => 95,          // garde-fou : au-delà, mise en veille du connecteur
+        'searches_per_analysis' => 2,    // recherches Amazon max par analyse d'idée
+    ],
+
     // ── Moteur de rédaction (étape 5) ──────────────────────────────────────
     'writing' => [
         'words_per_page'       => 285,    // mots par page (comme la maquette)

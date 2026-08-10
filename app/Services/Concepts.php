@@ -17,12 +17,31 @@ final class Concepts
         $idea = trim((string) ($project['idea'] ?? ''));
         $ideaLine = $idea !== '' ? "Idée d'origine de l'auteur : « {$idea} »\n" : '';
 
+        // Connecteur Canopy : le top réel de la niche alimente la détection d'angles morts
+        $realData = '';
+        $grounded = false;
+        if (Canopy::enabled()) {
+            try {
+                $snapshot = Canopy::marketSnapshot($theme['name']);
+                if ($snapshot) {
+                    $realData = "TOP RÉSULTATS RÉELS AMAZON POUR CETTE NICHE (via API — analyse ces titres "
+                        . "existants pour repérer les angles morts, les prix pratiqués et le niveau de "
+                        . "concurrence réel) :\n" . Canopy::formatSnapshot($snapshot) . "\n";
+                    $grounded = true;
+                }
+            } catch (\Throwable $e) {
+                error_log('[canopy] concepts : ' . $e->getMessage());
+            }
+        }
+
         $prompt = "Tu es directeur éditorial spécialisé en autoédition Amazon KDP France.\n"
             . "Thématique retenue : « {$theme['name']} » ({$theme['category']}).\n"
             . $ideaLine
+            . $realData
             . "Analyse ce qui se vend le mieux dans cette niche sur Amazon.fr (top 100, avis négatifs, "
             . "angles morts, prix) et propose 8 LIVRES À ÉCRIRE, chacun comblant un angle mort réel des "
-            . "meilleures ventes. Titres accrocheurs en français, commercialement solides.\n\n"
+            . "meilleures ventes" . ($grounded ? " — en particulier des titres réels listés ci-dessus" : '')
+            . ". Titres accrocheurs en français, commercialement solides.\n\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
             . '{"books":[{"title":"...","short_title":"...","hook":"...","description":"...","badge":"...",'
             . '"competition":"...","price":"14,90 €","pages_est":184}]}' . "\n"
@@ -70,7 +89,7 @@ final class Concepts
                 ]
             );
         }
-        return self::listFor($projectId);
+        return ['books' => self::listFor($projectId), 'grounded' => $grounded];
     }
 
     public static function listFor(int $projectId): array

@@ -8,7 +8,9 @@ use App\Core\Config;
 use App\Core\Csrf;
 use App\Core\Db;
 use App\Core\Http;
+use App\Core\Settings;
 use App\Core\Util;
+use App\Services\Canopy;
 use App\Services\ChapterTools;
 use App\Services\Concepts;
 use App\Services\Covers;
@@ -19,6 +21,7 @@ use App\Services\Layout;
 use App\Services\Market;
 use App\Services\PdfBook;
 use App\Services\Toc;
+use App\Services\Watch;
 use App\Services\Writer;
 
 final class Router
@@ -48,8 +51,16 @@ final class Router
             }
             if ($route === 'auth/me') {
                 $user = Auth::user();
+                $canopy = null;
+                if ($user) {
+                    try {
+                        $canopy = Canopy::status();
+                    } catch (\Throwable $e) {
+                        $canopy = null;
+                    }
+                }
                 Http::ok(['user' => $user ? self::publicUser($user) : null, 'csrf' => $user ? Csrf::token() : null,
-                          'app' => ['name' => Config::get('app.name'), 'base_url' => Config::baseUrl()]]);
+                          'app' => ['name' => Config::get('app.name'), 'base_url' => Config::baseUrl(), 'canopy' => $canopy]]);
             }
 
             // ── Tout le reste exige la session ──
@@ -119,13 +130,15 @@ final class Router
                     Http::error('Décrivez votre idée en quelques lignes (15 caractères minimum).');
                 }
                 Db::run('UPDATE projects SET idea = ?, mode = \'describe\', updated_at = ? WHERE id = ?', [$idea, Db::now(), $project['id']]);
-                Http::ok(['themes' => Market::analyze($project, $idea)]);
+                $result = Market::analyze($project, $idea);
+                Http::ok(['themes' => $result['themes'], 'grounded' => $result['grounded']]);
 
             case 'market/trends':
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
                 Db::run('UPDATE projects SET mode = \'trends\', updated_at = ? WHERE id = ?', [Db::now(), $project['id']]);
-                Http::ok(['themes' => Market::trends($project)]);
+                $result = Market::trends($project);
+                Http::ok(['themes' => $result['themes'], 'grounded' => $result['grounded']]);
 
             case 'themes/select':
                 Http::requirePost();
@@ -142,7 +155,8 @@ final class Router
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
                 $theme = self::selectedTheme($project);
-                Http::ok(['concepts' => Concepts::generate($project, $theme)]);
+                $result = Concepts::generate($project, $theme);
+                Http::ok(['concepts' => $result['books'], 'grounded' => $result['grounded']]);
 
             case 'concepts/select':
                 Http::requirePost();
@@ -315,6 +329,82 @@ final class Router
                 Http::requirePost();
                 Kdp::revokeToken($userId, (int) Http::in('token_id'));
                 Http::ok();
+
+            // ── Connecteurs (clés API éditables depuis l'interface) ──
+            case 'connectors/get':
+                Http::ok(['connectors' => [
+                    'gemini' => [
+                        'masked'     => Settings::masked('gemini.api_key'),
+                        'source'     => Settings::source('gemini.api_key'),
+                        'model_fast' => (string) Settings::get('gemini.model_fast', Config::get('gemini.model_fast')),
+                        'model_pro'  => (string) Settings::get('gemini.model_pro', Config::get('gemini.model_pro')),
+                    ],
+                    'canopy' => [
+                        'masked' => Settings::masked('canopy.api_key'),
+                        'source' => Settings::source('canopy.api_key'),
+                        'domain' => (string) Settings::get('canopy.domain', 'FR'),
+                        'status' => Canopy::status(),
+                    ],
+                ]]);
+
+            case 'connectors/save':
+                Http::requirePost();
+                $input = Http::input();
+                // Clés : champ vide = inchangé ; « - » = effacer la valeur interface
+                foreach (['gemini_api_key' => 'gemini.api_key', 'canopy_api_key' => 'canopy.api_key'] as $field => $setting) {
+                    if (!array_key_exists($field, $input)) {
+                        continue;
+                    }
+                    $value = trim((string) $input[$field]);
+                    if ($value === '-') {
+                        Settings::set($setting, '');
+                    } elseif ($value !== '') {
+                        Settings::set($setting, $value);
+                    }
+                }
+                foreach (['model_fast' => 'gemini.model_fast', 'model_pro' => 'gemini.model_pro', 'canopy_domain' => 'canopy.domain'] as $field => $setting) {
+                    if (array_key_exists($field, $input)) {
+                        Settings::set($setting, mb_substr(trim((string) $input[$field]), 0, 60));
+                    }
+                }
+                Http::ok(['canopy' => Canopy::status()]);
+
+            case 'canopy/test':
+                Http::requirePost();
+                try {
+                    Http::ok(['test' => Canopy::test()]);
+                } catch (\Throwable $e) {
+                    Http::error('Test Canopy : ' . $e->getMessage(), 502);
+                }
+
+            case 'gemini/test':
+                Http::requirePost();
+                $reply = Gemini::text('Réponds uniquement le mot : OK', ['model' => 'fast', 'temperature' => 0, 'max_tokens' => 20]);
+                Http::ok(['reply' => trim($reply)]);
+
+            // ── Veille marché (tableau de bord Canopy, relevés au clic) ──
+            case 'watch/list':
+                Http::ok(['watches' => Watch::list($userId), 'canopy' => Canopy::status()]);
+
+            case 'watch/add':
+                Http::requirePost();
+                Watch::add($userId, (string) Http::in('term', ''));
+                Http::ok(['watches' => Watch::list($userId)]);
+
+            case 'watch/remove':
+                Http::requirePost();
+                Watch::remove($userId, (int) Http::in('watch_id'));
+                Http::ok(['watches' => Watch::list($userId)]);
+
+            case 'watch/refresh':
+                Http::requirePost();
+                $result = Watch::refresh($userId, (int) Http::in('watch_id'));
+                Http::ok(['watches' => Watch::list($userId), 'canopy' => $result['status']]);
+
+            case 'watch/book':
+                Http::requirePost();
+                $newId = Watch::createBook($userId, (int) Http::in('watch_id'));
+                Http::ok(['project' => self::project($newId, $userId)]);
         }
     }
 

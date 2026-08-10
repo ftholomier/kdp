@@ -6,6 +6,14 @@
 
 SET NAMES utf8mb4;
 
+-- Réglages éditables depuis l'interface (écran « Connecteurs » : clés API…)
+CREATE TABLE IF NOT EXISTS settings (
+    name       VARCHAR(64) NOT NULL,
+    value      TEXT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Utilisateurs (mono-utilisateur par défaut, la table reste extensible)
 CREATE TABLE IF NOT EXISTS users (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -159,6 +167,28 @@ CREATE TABLE IF NOT EXISTS covers (
     updated_at DATETIME NOT NULL,
     PRIMARY KEY (project_id),
     CONSTRAINT fk_covers_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Veille marché Amazon (tableau de bord Canopy — relevés manuels au clic)
+CREATE TABLE IF NOT EXISTS watch_terms (
+    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id    INT UNSIGNED NOT NULL,
+    term       VARCHAR(120) NOT NULL,
+    position   SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    snapshot   MEDIUMTEXT NULL,
+    updated_at DATETIME NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_watch_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS watch_history (
+    id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    watch_id   INT UNSIGNED NOT NULL,
+    snapshot   MEDIUMTEXT NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_history_watch (watch_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Métadonnées de publication Amazon KDP (remplissage auto du formulaire)

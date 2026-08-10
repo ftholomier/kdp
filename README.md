@@ -73,6 +73,50 @@ IBM Plex Mono).
 > Extensions PHP requises : `pdo_mysql`, `curl`, `mbstring`, `gd`, `zip`, `iconv`
 > (présentes par défaut chez O2switch, OVH, Ionos…).
 
+## Connecteurs (clés API dans l'interface)
+
+Bouton **⚡ Connecteurs** en haut à droite : collez-y vos clés API sans toucher aux
+fichiers — elles sont enregistrées en base (table `settings`) et **priment sur
+`config/config.php`**. Chaque connecteur a un bouton « Tester la connexion ».
+
+- **Google Gemini** (obligatoire) — clé sur https://aistudio.google.com/apikey,
+  modèles rapide/qualité modifiables.
+- **Canopy API** (optionnel) — vraies données Amazon, voir ci-dessous.
+
+## Canopy API — vraies données Amazon (optionnel)
+
+Créez un compte gratuit sur https://www.canopyapi.co, copiez la clé API du
+tableau de bord et collez-la dans **⚡ Connecteurs**. Dès qu'elle est active :
+
+- **Étape 1 (Niche)** : l'analyse de votre idée interroge la vraie recherche
+  Amazon (jusqu'à 2 requêtes par analyse) — titres du top, prix médians, notes,
+  volumes d'avis — et Gemini ancre ses scores dessus. Badge
+  « ✓ Ancré sur les résultats réels Amazon » affiché.
+- **Étape 2 (Concept)** : le top réel de la niche choisie est fourni au modèle
+  pour détecter les angles morts des livres qui se vendent vraiment.
+
+- **◉ Veille marché** (bouton en haut à droite) : un tableau de bord de vos
+  niches Amazon, **mis à jour uniquement au clic**. Suivre une niche est
+  gratuit ; chaque « Actualiser » consomme volontairement 1 crédit (avec
+  confirmation et compteur de crédits restants). Les relevés sont persistés en
+  base — consultation gratuite à vie — et chaque nouveau relevé archive le
+  précédent pour afficher l'évolution (▲▼ prix médian, % d'avis cumulés,
+  proxy de la demande). Bouton « Créer un livre » pour transformer une niche
+  suivie en projet. Avec 100 crédits/mois : ~25 niches suivies au rythme
+  d'un relevé hebdomadaire.
+
+Pensé pour l'**offre gratuite** (~100 requêtes/mois) :
+
+- cache disque 7 jours (`canopy.cache_ttl`) : une même recherche ne consomme
+  qu'un crédit par semaine, regénérer des concepts ne coûte rien ;
+- garde-fou `canopy.monthly_budget` (95 par défaut) : quota atteint → le
+  connecteur se met en veille et **tout continue de fonctionner sur Gemini seul** ;
+- compteur visible dans l'écran Connecteurs et sur l'étape 1 ;
+- place de marché configurable (Amazon.fr par défaut).
+
+Toute erreur Canopy (clé, réseau, quota, schéma) est non bloquante : repli
+automatique sur l'analyse Gemini + Google Search.
+
 ## Vos gabarits de couverture (flat design)
 
 Chaque gabarit = un dossier dans `templates/covers/` :

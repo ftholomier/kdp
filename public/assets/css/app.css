@@ -157,6 +157,12 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 }
 .topbar-right { display: flex; align-items: center; gap: 18px; }
 .step-indicator { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.connector-btn {
+  padding: 7px 13px; border: 1px solid var(--line); border-radius: 99px; background: var(--paper);
+  font-size: 12.5px; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.connector-btn:hover { border-color: var(--navy); color: var(--ink); }
+.connector-btn.on { border-color: var(--navy); background: var(--navy); color: var(--navy-ink); }
 .user-pill {
   display: flex; align-items: center; gap: 9px; padding: 5px 12px 5px 6px;
   border: 1px solid var(--line); border-radius: 99px; background: var(--paper); cursor: pointer;

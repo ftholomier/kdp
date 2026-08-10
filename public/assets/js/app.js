@@ -136,6 +136,7 @@
     if (S.view === 'boot') return;
     if (S.view === 'login') { root.innerHTML = loginView(); return; }
     if (S.view === 'dashboard') { root.innerHTML = dashboardView(); return; }
+    if (S.view === 'watch') { root.innerHTML = watchView(); return; }
     root.innerHTML = wizardView();
     afterRender();
   }
@@ -194,6 +195,95 @@
         <div class="project-new" onclick="App.createProject()">${S.busy.create ? 'Création…' : '+ Nouveau livre'}</div>
         ${cards}
       </div>
+    </div>
+    ${S.modal || ''}`;
+  }
+
+  // ── Vue : veille marché (tableau de bord Canopy, relevés au clic) ────────
+
+  function watchView() {
+    const canopy = S.watchCanopy || (S.app.canopy || { enabled: false });
+    const remaining = canopy.enabled ? Math.max(0, canopy.budget - canopy.used) : 0;
+    const watches = S.watches || [];
+
+    return `
+    ${topbarView(false)}
+    <div class="page">
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap;">
+        <div class="page-head" style="max-width:640px;">
+          <div class="kicker">Veille marché</div>
+          <h1>Vos niches Amazon,<br>relevé par relevé.</h1>
+          <p class="lead">Chaque « Actualiser » interroge la vraie recherche Amazon via Canopy et <strong style="font-weight:500; color:var(--ink);">consomme 1 crédit</strong> — rien ne se rafraîchit tout seul. Les relevés restent consultables gratuitement, avec l'évolution entre deux relevés.</p>
+        </div>
+        <div class="card card-pad" style="min-width:220px;">
+          <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--fainter);">Crédits Canopy · ${esc((canopy.domain || 'FR'))}</div>
+          ${canopy.enabled ? `
+          <div class="mono" style="font-size:26px; margin-top:6px;">${remaining}<span style="font-size:14px; color:var(--faint);"> / ${canopy.budget} restants</span></div>
+          <div class="demand-track" style="margin-top:8px;"><div class="demand-fill" style="width:${Math.min(100, Math.round(canopy.used / canopy.budget * 100))}%; background:${canopy.exhausted ? 'var(--accent)' : 'var(--navy)'};"></div></div>
+          <div style="font-size:11.5px; color:var(--faint); margin-top:6px;">${canopy.used} utilisée${canopy.used > 1 ? 's' : ''} ce mois-ci${canopy.exhausted ? ' · quota atteint' : ''}</div>`
+          : `<div style="font-size:13px; color:var(--muted); margin-top:8px; line-height:1.5;">Connecteur non configuré.<br><span style="color:var(--accent); cursor:pointer;" onclick="App.openConnectors()">Coller ma clé Canopy ›</span></div>`}
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; margin:30px 0 22px; max-width:560px;">
+        <input type="text" id="watch-term" placeholder="Niche à suivre — ex. : carnet de gratitude, batch cooking…"
+               onkeydown="if(event.key==='Enter')App.addWatch()">
+        <button class="btn btn-primary" style="flex:none;" onclick="App.addWatch()" ${S.busy.watchAdd ? 'disabled' : ''}>+ Suivre</button>
+      </div>
+
+      ${watches.length === 0 ? `<div class="card card-pad" style="text-align:center; padding:44px; color:var(--faint);">
+        Ajoutez vos premières niches à suivre. L'ajout est gratuit — seul le relevé (↻) consomme un crédit.
+      </div>` : ''}
+
+      <div class="themes-grid">
+        ${watches.map(w => watchCardView(w, canopy)).join('')}
+      </div>
+    </div>
+    ${S.modal || ''}`;
+  }
+
+  function watchCardView(w, canopy) {
+    const s = w.snapshot;
+    const dPrice = w.delta && w.delta.price !== null ? w.delta.price : null;
+    const dReviews = w.delta && w.delta.reviews !== null ? w.delta.reviews : null;
+    const deltaBadge = (value, unit, invert) => {
+      if (value === null || value === 0) return '';
+      const up = value > 0;
+      const color = invert ? (up ? 'var(--green)' : 'var(--accent)') : (up ? 'var(--green)' : 'var(--accent)');
+      return `<span style="color:${color}; font-size:11px;">${up ? '▲' : '▼'} ${up ? '+' : ''}${value}${unit}</span>`;
+    };
+    return `
+    <div class="theme-card" style="cursor:default;">
+      <div class="top">
+        <div>
+          <div class="name">${esc(w.term)}</div>
+          <div class="cat">${s ? 'Relevé du ' + esc((w.updated_at || '').slice(0, 16).replace('T', ' ')) : 'Jamais relevé'}</div>
+        </div>
+        <span style="color:var(--fainter); cursor:pointer; font-size:15px; padding:2px 6px;" title="Ne plus suivre" onclick="App.removeWatch(${w.id})">✕</span>
+      </div>
+      ${s ? `
+      <div class="metrics">
+        <div><div class="metric-label">Prix médian</div><div class="metric-value">${s.median_price !== null ? String(s.median_price.toFixed(2)).replace('.', ',') + ' €' : 'n/c'} ${deltaBadge(dPrice, ' €')}</div></div>
+        <div><div class="metric-label">Note moy.</div><div class="metric-value">${s.avg_rating !== null ? s.avg_rating + '/5' : 'n/c'}</div></div>
+        <div><div class="metric-label">Avis cumulés</div><div class="metric-value">${nf(s.total_reviews)} ${deltaBadge(dReviews, ' %')}</div></div>
+      </div>
+      <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line-soft);">
+        <div class="metric-label" style="margin-bottom:7px;">Top réel (page 1)</div>
+        ${(s.top || []).slice(0, 5).map((p, i) => `
+        <div style="display:flex; gap:8px; padding:4px 0; font-size:12.5px; line-height:1.35;">
+          <span class="mono" style="color:var(--fainter); flex:none; font-size:11px; padding-top:1px;">${i + 1}</span>
+          <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.title)}">${esc(p.title)}</span>
+          <span class="mono" style="flex:none; color:var(--muted); font-size:11.5px;">${p.price !== null ? String(p.price.toFixed(2)).replace('.', ',') + ' €' : '—'}</span>
+        </div>`).join('')}
+      </div>` : `
+      <p class="why" style="color:var(--faint);">Cliquez « Relever » pour charger le top réel Amazon de cette niche (1 crédit).</p>`}
+      <div style="display:flex; gap:8px; margin-top:16px;">
+        <button class="btn btn-soft" style="padding:9px 14px; font-size:12.5px;" onclick="App.refreshWatch(${w.id})"
+          ${!canopy.enabled || canopy.exhausted || S.busy['watch' + w.id] ? 'disabled' : ''}>
+          ${S.busy['watch' + w.id] ? '<span class="spinner"></span> Relevé…' : '↻ ' + (s ? 'Actualiser' : 'Relever') + ' · 1 crédit'}
+        </button>
+        <button class="btn btn-ghost" style="padding:9px 14px; font-size:12.5px;" onclick="App.watchToBook(${w.id})">✎ Créer un livre</button>
+      </div>
     </div>`;
   }
 
@@ -215,6 +305,8 @@
       </div>
       <div class="topbar-right">
         ${withProject ? `<div class="step-indicator">Étape ${pad2(S.step)} / 7</div>` : ''}
+        <div class="connector-btn ${S.view === 'watch' ? 'on' : ''}" onclick="App.openWatch()" title="Veille marché Amazon — relevés Canopy à la demande">◉ Veille marché</div>
+        <div class="connector-btn" onclick="App.openConnectors()" title="Connecteurs — clés API Gemini, Canopy…">⚡ Connecteurs</div>
         <div class="user-pill" onclick="App.logout()" title="Se déconnecter">
           <div class="avatar">${esc(S.user ? S.user.initials : '')}</div>
           <span>${esc(S.user ? S.user.display_name : '')}</span>
@@ -282,7 +374,9 @@
             ${IDEA_CHIPS.map(c => `<div class="chip-dashed" onclick="App.addChip('${esc(c)}')">+ ${esc(c)}</div>`).join('')}
           </div>
           <div class="idea-footer">
-            <div class="src">Analyse Gemini + Google Search · marché Amazon.fr</div>
+            <div class="src">${S.app.canopy && S.app.canopy.enabled
+              ? 'Analyse Gemini + <strong style="color:var(--green); font-weight:500;">données réelles Amazon</strong> (Canopy)'
+              : 'Analyse Gemini + Google Search · marché Amazon.fr'}</div>
             <button class="btn btn-primary" onclick="App.analyze()" ${S.busy.analyze ? 'disabled' : ''}>
               ${S.busy.analyze ? '<span class="spinner"></span> Analyse en cours…' : (S.bundle.themes.analysis.length ? '↻ Relancer l’analyse' : 'Analyser le marché')}
             </button>
@@ -291,6 +385,11 @@
         <div class="signals">
           <div class="head">Ce que l'analyse regarde</div>
           ${SIGNALS.map((s, i) => `<div class="row"><span class="n">${pad2(i + 1)}</span><span>${s}</span></div>`).join('')}
+          ${S.app.canopy && S.app.canopy.enabled ? `
+          <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(237,229,214,.14); font-size:12px; opacity:.75; display:flex; justify-content:space-between; gap:10px;">
+            <span>Canopy API · vraies données Amazon.${esc((S.app.canopy.domain || 'FR').toLowerCase())}</span>
+            <span class="mono">${S.app.canopy.used}/${S.app.canopy.budget}${S.app.canopy.exhausted ? ' · épuisé' : ''}</span>
+          </div>` : ''}
         </div>
       </div>` : `
       ${!showThemes && !S.busy.trends ? `<div class="card card-pad" style="text-align:center; padding:40px;">
@@ -303,7 +402,7 @@
       <div style="margin-top:34px;">
         <div class="section-head">
           <h2>${isDescribe ? '6 thématiques pour votre idée' : 'Les catégories les plus consultées'}</h2>
-          <span class="sub">Trié par potentiel · généré à l'instant ${!isDescribe ? `· <span style="color:var(--accent); cursor:pointer;" onclick="App.loadTrends()">↻ actualiser</span>` : ''}</span>
+          <span class="sub">${isDescribe && S.groundedAnalysis ? '<strong style="color:var(--green); font-weight:500;">✓ Ancré sur les résultats réels Amazon</strong> · ' : ''}Trié par potentiel · généré à l'instant ${!isDescribe ? `· <span style="color:var(--accent); cursor:pointer;" onclick="App.loadTrends()">↻ actualiser</span>` : ''}</span>
         </div>
         <div class="themes-grid">
           ${themes.map((t, i) => `
@@ -350,6 +449,7 @@
           <div class="kicker">Étape 02 — Concept</div>
           <h1>8 livres à écrire dans cette niche.</h1>
           <p class="lead">Chaque concept comble un angle mort repéré dans les 100 meilleures ventes de <strong style="font-weight:500; color:var(--ink);">${esc(theme ? theme.name : 'votre thème')}</strong>.</p>
+          ${S.groundedConcepts ? `<p style="font-size:13px; color:var(--green); margin:10px 0 0;">✓ Angles morts détectés sur le top réel Amazon (Canopy API)</p>` : ''}
         </div>
         <div style="display:flex; gap:10px;">
           <button class="btn btn-ghost" onclick="App.goStep(1)">Changer de thème</button>
@@ -1013,6 +1113,65 @@
     </div>`;
   }
 
+  function connectorsModalView(connectors) {
+    const gemini = connectors.gemini;
+    const canopy = connectors.canopy;
+    const sourceLabel = source => source === 'interface' ? 'clé saisie ici'
+      : source === 'fichier' ? 'clé du fichier config.php' : 'non configurée';
+    return `
+    <div class="modal-backdrop" onclick="if(event.target===this)App.closeModal()">
+      <div class="modal">
+        <h2>⚡ Connecteurs</h2>
+        <div class="sub">Collez vos clés API ici : elles sont enregistrées en base et priment sur <span class="mono" style="font-size:12px;">config/config.php</span>. Laissez un champ clé vide pour ne pas la changer, tapez <span class="mono" style="font-size:12px;">-</span> pour l'effacer.</div>
+
+        <div style="border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px;">
+            <div style="font-weight:600;">Google Gemini <span class="faint" style="font-weight:400;">— IA (obligatoire)</span></div>
+            <span class="badge ${gemini.source ? 'badge-green' : 'badge-orange'}">${sourceLabel(gemini.source)}</span>
+          </div>
+          <div class="row" style="margin-top:12px;">
+            <label>Clé API ${gemini.masked ? `<span class="faint">(actuelle : ${esc(gemini.masked)})</span>` : ''}
+              <input type="password" id="cn-gemini-key" placeholder="${gemini.masked ? 'inchangée' : 'Collez votre clé — aistudio.google.com/apikey'}" autocomplete="off">
+            </label>
+          </div>
+          <div class="grid2 row">
+            <label>Modèle rapide<input type="text" id="cn-model-fast" value="${esc(gemini.model_fast)}"></label>
+            <label>Modèle qualité<input type="text" id="cn-model-pro" value="${esc(gemini.model_pro)}"></label>
+          </div>
+          <button class="btn btn-ghost" style="padding:8px 14px;" onclick="App.testGemini()" ${S.busy.testGemini ? 'disabled' : ''}>${S.busy.testGemini ? 'Test…' : 'Tester la connexion'}</button>
+        </div>
+
+        <div style="border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px;">
+            <div style="font-weight:600;">Canopy API <span class="faint" style="font-weight:400;">— vraies données Amazon (optionnel)</span></div>
+            <span class="badge ${canopy.source ? 'badge-green' : 'badge-neutral'}">${sourceLabel(canopy.source)}</span>
+          </div>
+          <div class="sub" style="margin:8px 0 0;">Version gratuite sur <a href="https://www.canopyapi.co" target="_blank" rel="noopener">canopyapi.co</a> : l'analyse de niche et les concepts s'appuient alors sur les vrais résultats Amazon (titres, prix, notes, volume d'avis). Cache 7 jours pour économiser le quota${canopy.status && canopy.status.enabled ? ` · <strong>${canopy.status.used}/${canopy.status.budget} requêtes ce mois-ci</strong>${canopy.status.exhausted ? ' — quota atteint, repli sur Gemini seul' : ''}` : ''}.</div>
+          <div class="row" style="margin-top:12px;">
+            <label>Clé API ${canopy.masked ? `<span class="faint">(actuelle : ${esc(canopy.masked)})</span>` : ''}
+              <input type="password" id="cn-canopy-key" placeholder="${canopy.masked ? 'inchangée' : 'Collez votre clé Canopy'}" autocomplete="off">
+            </label>
+          </div>
+          <div class="grid2 row">
+            <label>Place de marché
+              <select id="cn-canopy-domain">
+                ${['FR', 'US', 'UK', 'DE', 'ES', 'IT', 'CA'].map(d => `<option value="${d}" ${canopy.domain === d ? 'selected' : ''}>Amazon.${d === 'UK' ? 'co.uk' : d === 'US' ? 'com' : d.toLowerCase()}</option>`).join('')}
+              </select>
+            </label>
+            <div style="display:flex; align-items:flex-end;">
+              <button class="btn btn-ghost" style="padding:8px 14px; width:100%;" onclick="App.testCanopy()" ${S.busy.testCanopy ? 'disabled' : ''}>${S.busy.testCanopy ? 'Test…' : 'Tester la connexion'}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="App.closeModal()">Fermer</button>
+          <button class="btn btn-primary" onclick="App.saveConnectors()" ${S.busy.connectors ? 'disabled' : ''}>${S.busy.connectors ? '<span class="spinner"></span> ' : ''}Enregistrer</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function toneModalView() {
     return `
     <div class="modal-backdrop" onclick="if(event.target===this)App.closeModal()">
@@ -1041,6 +1200,8 @@
         const data = await Api.post('auth/login', { email, password });
         S.user = data.user;
         Api.setCsrf(data.csrf);
+        const me = await Api.get('auth/me'); // statut des connecteurs (Canopy…) une fois connecté
+        S.app = me.app || S.app;
         await loadProjects();
         S.view = 'dashboard';
         S.bootError = null;
@@ -1101,6 +1262,7 @@
       try {
         const data = await Api.post('market/analyze', { id: S.project.id, idea });
         S.bundle.themes.analysis = data.themes;
+        S.groundedAnalysis = !!data.grounded;
         S.project.mode = 'describe';
       } catch (e) { toast(e.message, true); }
       setBusy('analyze', false);
@@ -1129,6 +1291,7 @@
         if (S.bundle.concepts.length === 0) {
           const data = await Api.post('concepts/generate', { id: S.project.id });
           S.bundle.concepts = data.concepts;
+          S.groundedConcepts = !!data.grounded;
         }
         S.step = 2;
       } catch (e) { toast(e.message, true); }
@@ -1142,6 +1305,7 @@
       try {
         const data = await Api.post('concepts/generate', { id: S.project.id });
         S.bundle.concepts = data.concepts;
+        S.groundedConcepts = !!data.grounded;
         S.project.concept_id = null;
       } catch (e) { toast(e.message, true); }
       setBusy('concepts', false);
@@ -1381,6 +1545,126 @@
 
     copyToken(token) {
       navigator.clipboard.writeText(token).then(() => toast('Jeton copié dans le presse-papiers.'));
+    },
+
+    // Veille marché (relevés Canopy au clic)
+    async openWatch() {
+      S.writer.looping = false;
+      S.view = 'watch';
+      render();
+      try {
+        const data = await Api.get('watch/list');
+        S.watches = data.watches;
+        S.watchCanopy = data.canopy;
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async addWatch() {
+      const input = document.getElementById('watch-term');
+      const term = (input ? input.value : '').trim();
+      if (!term) return;
+      setBusy('watchAdd', true);
+      try {
+        const data = await Api.post('watch/add', { term });
+        S.watches = data.watches;
+        toast('« ' + term + ' » est suivie — cliquez « Relever » pour charger ses données (1 crédit).');
+      } catch (e) { toast(e.message, true); }
+      setBusy('watchAdd', false);
+    },
+
+    async removeWatch(watchId) {
+      const w = (S.watches || []).find(x => x.id === watchId);
+      if (!confirm('Ne plus suivre « ' + (w ? w.term : '') + ' » ? Ses relevés seront supprimés.')) return;
+      try {
+        const data = await Api.post('watch/remove', { watch_id: watchId });
+        S.watches = data.watches;
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async refreshWatch(watchId) {
+      const canopy = S.watchCanopy || S.app.canopy || {};
+      const remaining = Math.max(0, (canopy.budget || 0) - (canopy.used || 0));
+      const w = (S.watches || []).find(x => x.id === watchId);
+      if (!confirm('Relever « ' + (w ? w.term : '') + ' » maintenant ?\nCela consommera 1 crédit Canopy (' + remaining + ' restant' + (remaining > 1 ? 's' : '') + ' ce mois-ci).')) return;
+      S.busy['watch' + watchId] = true;
+      render();
+      try {
+        const data = await Api.post('watch/refresh', { watch_id: watchId });
+        S.watches = data.watches;
+        S.watchCanopy = data.canopy;
+        if (S.app.canopy) S.app.canopy = data.canopy;
+        toast('Relevé enregistré.');
+      } catch (e) { toast(e.message, true); }
+      S.busy['watch' + watchId] = false;
+      render();
+    },
+
+    async watchToBook(watchId) {
+      try {
+        const data = await Api.post('watch/book', { watch_id: watchId });
+        toast('Projet créé depuis la niche suivie.');
+        await openProject(data.project.id, 1);
+      } catch (e) { toast(e.message, true); }
+    },
+
+    // Connecteurs (clés API)
+    async openConnectors() {
+      try {
+        const data = await Api.get('connectors/get');
+        S.connectors = data.connectors;
+        S.modal = connectorsModalView(S.connectors);
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async saveConnectors() {
+      // Lire les champs AVANT tout re-rendu
+      const payload = {
+        gemini_api_key: document.getElementById('cn-gemini-key').value,
+        model_fast: document.getElementById('cn-model-fast').value,
+        model_pro: document.getElementById('cn-model-pro').value,
+        canopy_api_key: document.getElementById('cn-canopy-key').value,
+        canopy_domain: document.getElementById('cn-canopy-domain').value
+      };
+      setBusy('connectors', true);
+      try {
+        await Api.post('connectors/save', payload);
+        const me = await Api.get('auth/me');
+        S.app = me.app || S.app;
+        const data = await Api.get('connectors/get');
+        S.connectors = data.connectors;
+        S.modal = connectorsModalView(S.connectors);
+        toast('Connecteurs enregistrés.');
+      } catch (e) { toast(e.message, true); }
+      S.busy.connectors = false;
+      render();
+    },
+
+    async testGemini() {
+      setBusy('testGemini', true);
+      S.modal = connectorsModalView(S.connectors); render();
+      try {
+        const data = await Api.post('gemini/test', {});
+        toast('Gemini répond : « ' + data.reply + ' » — connexion OK.');
+      } catch (e) { toast(e.message, true); }
+      S.busy.testGemini = false;
+      S.modal = connectorsModalView(S.connectors);
+      render();
+    },
+
+    async testCanopy() {
+      setBusy('testCanopy', true);
+      S.modal = connectorsModalView(S.connectors); render();
+      try {
+        const data = await Api.post('canopy/test', {});
+        const sample = (data.test.sample || []).map(p => p.title).join(' · ');
+        toast('Canopy OK — ' + data.test.results_count + ' résultats. Ex. : ' + sample.slice(0, 120));
+      } catch (e) { toast(e.message, true); }
+      S.busy.testCanopy = false;
+      S.modal = connectorsModalView(S.connectors);
+      render();
     },
 
     async revokeToken(tokenId) {

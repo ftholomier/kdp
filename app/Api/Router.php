@@ -68,6 +68,9 @@ final class Router
             if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 Csrf::check();
             }
+            // Libère le verrou du fichier de session : les appels longs (IA)
+            // ne bloquent plus les autres requêtes du même navigateur.
+            session_write_close();
 
             self::authedRoutes($route, $user);
             Http::error('Route inconnue : ' . $route, 404);
@@ -379,8 +382,20 @@ final class Router
 
             case 'gemini/test':
                 Http::requirePost();
-                $reply = Gemini::text('Réponds uniquement le mot : OK', ['model' => 'fast', 'temperature' => 0, 'max_tokens' => 20]);
-                Http::ok(['reply' => trim($reply)]);
+                // Échec rapide : pas de relance, timeout court, budget large
+                // (les modèles « réflexifs » consomment des jetons avant de répondre)
+                $reply = Gemini::text('Réponds uniquement le mot : OK', [
+                    'model' => 'fast', 'temperature' => 0, 'max_tokens' => 2048,
+                    'retries' => 0, 'timeout' => 45,
+                ]);
+                Http::ok(['reply' => mb_substr(trim($reply), 0, 60)]);
+
+            case 'gemini/models':
+                try {
+                    Http::ok(['models' => Gemini::models()]);
+                } catch (\Throwable $e) {
+                    Http::ok(['models' => []]);
+                }
 
             // ── Veille marché (tableau de bord Canopy, relevés au clic) ──
             case 'watch/list':

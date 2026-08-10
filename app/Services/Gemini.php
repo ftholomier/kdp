@@ -60,14 +60,17 @@ final class Gemini
              . ':generateContent?key=' . rawurlencode($apiKey);
 
         $payload = json_encode($body, JSON_UNESCAPED_UNICODE);
-        $retries = max(0, (int) ($cfg['max_retries'] ?? 2));
+        $retries = array_key_exists('retries', $opts)
+            ? max(0, (int) $opts['retries'])
+            : max(0, (int) ($cfg['max_retries'] ?? 2));
+        $timeout = (int) ($opts['timeout'] ?? $cfg['timeout'] ?? 180);
         $lastError = 'Erreur inconnue';
 
         for ($attempt = 0; $attempt <= $retries; $attempt++) {
             if ($attempt > 0) {
                 sleep(min(8, 2 ** $attempt));
             }
-            [$code, $response, $curlError] = self::post($url, (string) $payload, $cfg);
+            [$code, $response, $curlError] = self::post($url, (string) $payload, $cfg, $timeout);
 
             if ($curlError !== '') {
                 $lastError = 'Réseau : ' . $curlError;
@@ -109,8 +112,65 @@ final class Gemini
         return Util::extractJson($text);
     }
 
+    /**
+     * Liste des modèles Gemini disponibles pour la clé configurée
+     * (cache disque 24 h). Vide si clé absente ou API injoignable.
+     * @return array<int,array{id:string,label:string}>
+     */
+    public static function models(): array
+    {
+        $cfg = Config::get('gemini');
+        $apiKey = trim((string) Settings::get('gemini.api_key', ''));
+        if ($apiKey === '') {
+            return [];
+        }
+        $cacheDir = (string) Config::get('paths.cache');
+        if (!is_dir($cacheDir)) {
+            mkdir($cacheDir, 0775, true);
+        }
+        $cacheFile = $cacheDir . '/gemini-models-' . substr(md5($apiKey), 0, 12) . '.json';
+        if (is_file($cacheFile) && (time() - (int) filemtime($cacheFile)) < 86400) {
+            $cached = json_decode((string) file_get_contents($cacheFile), true);
+            if (is_array($cached)) {
+                return $cached;
+            }
+        }
+
+        $ch = curl_init(rtrim($cfg['endpoint'], '/') . '/models?pageSize=200&key=' . rawurlencode($apiKey));
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT        => 20,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+        $response = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+
+        $models = [];
+        $data = is_string($response) ? json_decode($response, true) : null;
+        if ($code === 200 && is_array($data)) {
+            foreach ((array) ($data['models'] ?? []) as $model) {
+                $name = (string) ($model['name'] ?? '');
+                $methods = (array) ($model['supportedGenerationMethods'] ?? []);
+                if (!str_starts_with($name, 'models/gemini') || !in_array('generateContent', $methods, true)) {
+                    continue;
+                }
+                $id = substr($name, strlen('models/'));
+                // On écarte les variantes non pertinentes pour la rédaction
+                if (preg_match('/embedding|aqa|-tts|image|vision|audio|live/i', $id)) {
+                    continue;
+                }
+                $models[] = ['id' => $id, 'label' => (string) ($model['displayName'] ?: $id)];
+            }
+            usort($models, fn ($a, $b) => strcmp($b['id'], $a['id']));
+            file_put_contents($cacheFile, json_encode($models, JSON_UNESCAPED_UNICODE));
+        }
+        return $models;
+    }
+
     /** @return array{0:int,1:string,2:string} code HTTP, corps, erreur curl */
-    private static function post(string $url, string $payload, array $cfg): array
+    private static function post(string $url, string $payload, array $cfg, int $timeout = 180): array
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -119,7 +179,7 @@ final class Gemini
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => (int) ($cfg['connect_timeout'] ?? 15),
-            CURLOPT_TIMEOUT        => (int) ($cfg['timeout'] ?? 180),
+            CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_SSL_VERIFYPEER => true,
         ]);
         $response = curl_exec($ch);

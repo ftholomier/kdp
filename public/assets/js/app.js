@@ -1118,6 +1118,25 @@
     const canopy = connectors.canopy;
     const sourceLabel = source => source === 'interface' ? 'clé saisie ici'
       : source === 'fichier' ? 'clé du fichier config.php' : 'non configurée';
+
+    // Liste de modèles : ceux réellement disponibles pour la clé (API, cache 24 h),
+    // complétés d'une liste standard et des valeurs actuelles.
+    const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+    const seen = new Set();
+    const models = [];
+    (S.geminiModels || []).forEach(m => { if (!seen.has(m.id)) { seen.add(m.id); models.push(m); } });
+    FALLBACK_MODELS.concat([gemini.model_fast, gemini.model_pro]).filter(Boolean).forEach(id => {
+      if (!seen.has(id)) { seen.add(id); models.push({ id, label: id }); }
+    });
+    const modelSelect = (domId, current) => `
+      <select id="${domId}">
+        ${models.map(m => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''}>${esc(m.label !== m.id ? m.label + ' — ' + m.id : m.id)}</option>`).join('')}
+      </select>`;
+    const testResult = key => {
+      const r = (S.testResults || {})[key];
+      if (!r) return '';
+      return `<div class="note ${r.ok ? 'note-ok' : 'note-warn'}" style="margin:12px 0 0;">${r.ok ? '✓' : '!'} ${esc(r.message)}</div>`;
+    };
     return `
     <div class="modal-backdrop" onclick="if(event.target===this)App.closeModal()">
       <div class="modal">
@@ -1135,10 +1154,12 @@
             </label>
           </div>
           <div class="grid2 row">
-            <label>Modèle rapide<input type="text" id="cn-model-fast" value="${esc(gemini.model_fast)}"></label>
-            <label>Modèle qualité<input type="text" id="cn-model-pro" value="${esc(gemini.model_pro)}"></label>
+            <label>Modèle rapide <span class="faint">(analyses, sommaire…)</span>${modelSelect('cn-model-fast', gemini.model_fast)}</label>
+            <label>Modèle qualité <span class="faint">(rédaction)</span>${modelSelect('cn-model-pro', gemini.model_pro)}</label>
           </div>
-          <button class="btn btn-ghost" style="padding:8px 14px;" onclick="App.testGemini()" ${S.busy.testGemini ? 'disabled' : ''}>${S.busy.testGemini ? 'Test…' : 'Tester la connexion'}</button>
+          ${S.geminiModels && S.geminiModels.length ? `<div class="faint" style="font-size:11.5px; margin:-4px 0 10px;">${S.geminiModels.length} modèles détectés pour votre clé.</div>` : ''}
+          <button class="btn btn-ghost" style="padding:8px 14px;" onclick="App.testGemini()" ${S.busy.testGemini ? 'disabled' : ''}>${S.busy.testGemini ? '<span class="spinner" style="border-color:var(--navy); border-top-color:transparent;"></span> Test en cours (jusqu’à 45 s)…' : 'Tester la connexion'}</button>
+          ${testResult('gemini')}
         </div>
 
         <div style="border:1px solid var(--line); border-radius:12px; padding:16px;">
@@ -1159,9 +1180,10 @@
               </select>
             </label>
             <div style="display:flex; align-items:flex-end;">
-              <button class="btn btn-ghost" style="padding:8px 14px; width:100%;" onclick="App.testCanopy()" ${S.busy.testCanopy ? 'disabled' : ''}>${S.busy.testCanopy ? 'Test…' : 'Tester la connexion'}</button>
+              <button class="btn btn-ghost" style="padding:8px 14px; width:100%;" onclick="App.testCanopy()" ${S.busy.testCanopy ? 'disabled' : ''}>${S.busy.testCanopy ? '<span class="spinner" style="border-color:var(--navy); border-top-color:transparent;"></span> Test…' : 'Tester la connexion · 1 crédit'}</button>
             </div>
           </div>
+          ${testResult('canopy')}
         </div>
 
         <div class="foot">
@@ -1612,10 +1634,16 @@
     // Connecteurs (clés API)
     async openConnectors() {
       try {
+        S.testResults = {};
         const data = await Api.get('connectors/get');
         S.connectors = data.connectors;
         S.modal = connectorsModalView(S.connectors);
         render();
+        // Liste réelle des modèles disponibles pour la clé (asynchrone)
+        Api.get('gemini/models').then(m => {
+          S.geminiModels = m.models || [];
+          if (S.modal && S.connectors) { S.modal = connectorsModalView(S.connectors); render(); }
+        }).catch(() => {});
       } catch (e) { toast(e.message, true); }
     },
 
@@ -1637,31 +1665,50 @@
         S.connectors = data.connectors;
         S.modal = connectorsModalView(S.connectors);
         toast('Connecteurs enregistrés.');
+        // La clé a pu changer : on réactualise la liste des modèles disponibles
+        Api.get('gemini/models').then(m => {
+          S.geminiModels = m.models || [];
+          if (S.modal && S.connectors) { S.modal = connectorsModalView(S.connectors); render(); }
+        }).catch(() => {});
       } catch (e) { toast(e.message, true); }
       S.busy.connectors = false;
       render();
     },
 
     async testGemini() {
+      S.testResults = S.testResults || {};
+      delete S.testResults.gemini;
       setBusy('testGemini', true);
       S.modal = connectorsModalView(S.connectors); render();
       try {
         const data = await Api.post('gemini/test', {});
-        toast('Gemini répond : « ' + data.reply + ' » — connexion OK.');
-      } catch (e) { toast(e.message, true); }
+        S.testResults.gemini = { ok: true, message: 'Connexion opérationnelle — le modèle répond : « ' + data.reply + ' ».' };
+      } catch (e) {
+        S.testResults.gemini = { ok: false, message: e.message };
+      }
       S.busy.testGemini = false;
       S.modal = connectorsModalView(S.connectors);
       render();
     },
 
     async testCanopy() {
+      S.testResults = S.testResults || {};
+      delete S.testResults.canopy;
       setBusy('testCanopy', true);
       S.modal = connectorsModalView(S.connectors); render();
       try {
         const data = await Api.post('canopy/test', {});
         const sample = (data.test.sample || []).map(p => p.title).join(' · ');
-        toast('Canopy OK — ' + data.test.results_count + ' résultats. Ex. : ' + sample.slice(0, 120));
-      } catch (e) { toast(e.message, true); }
+        S.testResults.canopy = {
+          ok: true,
+          message: 'Connexion opérationnelle — ' + data.test.results_count + ' résultats Amazon reçus'
+            + (sample ? ' (ex. : ' + sample.slice(0, 110) + '…)' : '')
+            + '. Quota : ' + data.test.usage.used + '/' + data.test.usage.budget + '.'
+        };
+        if (S.app.canopy) S.app.canopy = data.test.usage;
+      } catch (e) {
+        S.testResults.canopy = { ok: false, message: e.message };
+      }
       S.busy.testCanopy = false;
       S.modal = connectorsModalView(S.connectors);
       render();

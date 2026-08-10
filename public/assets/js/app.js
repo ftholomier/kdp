@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c7';
+  const BUILD = '2026-08-10 · c8';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1480,13 +1480,16 @@
       const prompt = (document.getElementById('cover-illus-prompt') || {}).value || '';
       setBusy('illus', true);
       try {
-        await Api.post('coverstudio/illustration', { id: S.project.id, prompt });
+        const data = await Api.post('coverstudio/illustration', { id: S.project.id, prompt });
         S.coverHasIllustration = true;
-        S.cover.texts.illus_prompt = prompt || S.coverDefaultPrompt;
-        toast('Illustration générée et intégrée à la couverture.');
+        if (data.cover) S.cover = data.cover; // bascule auto en mise en page « affiche »
+        if (S.coverVariants) S.coverVariants.forEach(v => { v.selected = false; });
+        toast('Illustration générée — affichée en pleine page sur la couverture.');
       } catch (e) { toast(e.message, true); }
       setBusy('illus', false);
+      render();
       refreshFrontPreview();
+      injectCoverPreviews();
     },
 
     async clearIllustration() {

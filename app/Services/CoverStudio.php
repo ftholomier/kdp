@@ -33,7 +33,7 @@ final class CoverStudio
         ['name' => 'Cobalt vif',    'c1' => '#2743D0', 'c2' => '#FF6B4A', 'c3' => '#EEF0FF', 'c4' => '#16267A'],
     ];
 
-    public const LAYOUTS = ['bloc', 'cercle', 'bandeau', 'duo', 'diagonale', 'cadre'];
+    public const LAYOUTS = ['affiche', 'bloc', 'cercle', 'bandeau', 'duo', 'diagonale', 'cadre'];
 
     public const MOTIFS = ['soleil', 'arches', 'montagnes', 'vagues', 'pastilles', 'feuille', 'etoile', 'blob'];
 
@@ -208,6 +208,31 @@ final class CoverStudio
         $M = 130; // marge intérieure
 
         switch ($layout) {
+            case 'affiche':
+                // L'ILLUSTRATION EN GRAND : pleine page, du bord haut au bandeau
+                // titre — c'est la mise en page appliquée automatiquement après
+                // une génération d'illustration IA.
+                $bandY = (int) round($H * 0.70);
+                if ($illus) {
+                    self::drawCover($im, $illus, 0, 0, $W, $bandY, false);
+                } else {
+                    imagefilledrectangle($im, 0, 0, $W, $bandY, $c1);
+                    self::drawMotif($im, $motif, $W / 2, $bandY / 2, $W * 0.30, $c2, $c3);
+                }
+                // Bandeau titre flat + filet accent
+                imagefilledrectangle($im, 0, $bandY, $W, $H, $c1);
+                imagefilledrectangle($im, 0, $bandY, $W, $bandY + 16, $c2);
+                self::textBlock($im, $serif, $title, $M, $bandY + 150, $W - 2 * $M, 96, 114, $c3, 'left', 3);
+                if ($tagline) self::textBlock($im, $italic, $tagline, $M, $bandY + 150 + 3 * 114 - 40, $W - 2 * $M, 48, 58, $c2, 'left', 2);
+                // Auteur : pastille flat en haut (lisible sur toute image)
+                if ($author) {
+                    $aw = self::width('IBMPlexMono-Medium.ttf', implode('', array_map(fn ($c) => $c . ' ', mb_str_split($author))), 40);
+                    imagefilledrectangle($im, $M - 30, 96, $M + $aw + 40, 208, $c1);
+                    imagefilledrectangle($im, $M - 30, 200, $M + $aw + 40, 208, $c2);
+                    self::line($im, $mono, $author, 40, $M, 168, $c3, 6);
+                }
+                break;
+
             case 'bloc':
                 imagefilledrectangle($im, 0, 0, $W, $H, $c3);
                 imagefilledrectangle($im, 0, 0, $W, (int) round($H * 0.66), $c1);

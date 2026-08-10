@@ -278,8 +278,12 @@ final class Router
                     $prompt = CoverStudio::defaultPrompt($cover['texts']);
                 }
                 CoverStudio::generateIllustration((int) $project['id'], $prompt, $cover['palette']);
-                Covers::save((int) $project['id'], 'studio', $cover['palette'], array_merge($cover['texts'], ['illus_prompt' => $prompt]));
-                Http::ok(['generated' => true]);
+                // L'illustration générée prend toute la couverture : bascule
+                // automatique sur la mise en page « affiche » (image en grand).
+                $palette = $cover['palette'];
+                $palette['layout'] = 'affiche';
+                Covers::save((int) $project['id'], 'studio', $palette, array_merge($cover['texts'], ['illus_prompt' => $prompt]));
+                Http::ok(['generated' => true, 'cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
 
             case 'coverstudio/clear-illustration':
                 Http::requirePost();

@@ -205,10 +205,15 @@ final class Router
             case 'covers/get':
                 $project = self::project((int) Http::in('id'), $userId);
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $hasIllus = is_file(CoverStudio::illusPath((int) $project['id']));
+                $geometry = \App\Services\Layout::geometry($project);
                 Http::ok([
                     'cover'            => $cover,
-                    'templates'        => Covers::templates(),
-                    'has_illustration' => is_file(CoverStudio::illusPath((int) $project['id'])),
+                    'els'              => Covers::frontElements($cover, $hasIllus),
+                    'fonts'            => CoverStudio::fonts(),
+                    'motifs'           => CoverStudio::MOTIFS,
+                    'geometry'         => $geometry,
+                    'has_illustration' => $hasIllus,
                     'has_reference'    => is_file(CoverStudio::refPath((int) $project['id'])),
                     'default_prompt'   => CoverStudio::defaultPrompt($cover['texts']),
                 ]);
@@ -240,33 +245,61 @@ final class Router
                 echo Covers::render($cover, (string) Http::in('face', 'front'));
                 exit;
 
-            // ── Studio de couvertures (variantes flat + illustration IA) ──
+            // ── Studio de couvertures (éditeur à éléments + illustration IA) ──
             case 'coverstudio/variants':
                 Http::requirePost();
-                @set_time_limit(120);
+                @set_time_limit(180);
                 $project = self::project((int) Http::in('id'), $userId);
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $hasIllus = is_file(CoverStudio::illusPath((int) $project['id']));
+                $illusPath = $hasIllus ? CoverStudio::illusPath((int) $project['id']) : null;
                 $variants = CoverStudio::variants((int) Http::in('seed', 1));
                 $current = $cover['palette'];
-                Http::ok(['variants' => array_map(fn ($v) => [
-                    'layout'  => $v['layout'],
-                    'motif'   => $v['motif'],
-                    'palette' => $v['palette'],
-                    'thumb'   => CoverStudio::thumbnail($v, $cover['texts']),
-                    'selected'=> ($current['layout'] ?? '') === $v['layout']
-                        && ($current['motif'] ?? '') === $v['motif']
-                        && ($current['c1'] ?? '') === $v['palette']['c1'],
-                ], $variants)]);
+                Http::ok(['variants' => array_map(function ($v) use ($cover, $hasIllus, $illusPath, $current) {
+                    $els = CoverStudio::layoutElements($v['layout'], $v['palette'], $v['motif'], $cover['texts'], $hasIllus);
+                    return [
+                        'layout'  => $v['layout'],
+                        'motif'   => $v['motif'],
+                        'palette' => $v['palette'],
+                        'thumb'   => CoverStudio::thumbnailFromElements($els, $illusPath),
+                        'selected'=> ($current['layout'] ?? '') === $v['layout']
+                            && ($current['motif'] ?? '') === $v['motif']
+                            && ($current['c1'] ?? '') === $v['palette']['c1'],
+                    ];
+                }, $variants)]);
 
             case 'coverstudio/select':
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 $palette = (array) Http::in('palette', []);
-                $palette['layout'] = (string) Http::in('layout', 'bloc');
+                $palette['layout'] = (string) Http::in('layout', 'affiche');
                 $palette['motif'] = (string) Http::in('motif', 'blob');
-                Covers::save((int) $project['id'], 'studio', $palette, array_merge($cover['texts'], (array) Http::in('texts', [])));
+                Covers::save((int) $project['id'], 'studio', $palette, $cover['texts']);
+                // La version choisie devient le point de départ ÉDITABLE
+                $freshCover = Covers::get(self::project((int) $project['id'], $userId), null, $user);
+                $els = CoverStudio::layoutElements(
+                    $palette['layout'], $freshCover['palette'], $palette['motif'],
+                    $freshCover['texts'], is_file(CoverStudio::illusPath((int) $project['id']))
+                );
+                Covers::saveLayout((int) $project['id'], $els);
                 Http::ok(['cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
+
+            case 'coverstudio/layout-save':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $els = Covers::saveLayout((int) $project['id'], (array) Http::in('els', []));
+                Http::ok(['els' => $els]);
+
+            case 'coverstudio/motif':
+                $type = in_array($_GET['type'] ?? '', CoverStudio::MOTIFS, true) ? (string) $_GET['type'] : 'blob';
+                $hex = fn ($v, $d) => preg_match('/^#[0-9a-fA-F]{3,8}$/', (string) $v) ? (string) $v : $d;
+                $png = CoverStudio::motifPng($type, $hex($_GET['c1'] ?? '', '#C4571F'), $hex($_GET['c2'] ?? '', '#F4EFE4'));
+                header('Content-Type: image/png');
+                header('Cache-Control: private, max-age=3600');
+                echo $png;
+                exit;
 
             case 'coverstudio/illustration':
                 Http::requirePost();
@@ -278,11 +311,12 @@ final class Router
                     $prompt = CoverStudio::defaultPrompt($cover['texts']);
                 }
                 CoverStudio::generateIllustration((int) $project['id'], $prompt, $cover['palette']);
-                // L'illustration générée prend toute la couverture : bascule
-                // automatique sur la mise en page « affiche » (image en grand).
+                // L'illustration prend toute la couverture : éléments « affiche »
                 $palette = $cover['palette'];
                 $palette['layout'] = 'affiche';
                 Covers::save((int) $project['id'], 'studio', $palette, array_merge($cover['texts'], ['illus_prompt' => $prompt]));
+                $freshCover = Covers::get(self::project((int) $project['id'], $userId), null, $user);
+                Covers::saveLayout((int) $project['id'], CoverStudio::layoutElements('affiche', $freshCover['palette'], (string) ($palette['motif'] ?? 'blob'), $freshCover['texts'], true));
                 Http::ok(['generated' => true, 'cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
 
             case 'coverstudio/clear-illustration':
@@ -318,14 +352,9 @@ final class Router
                 @set_time_limit(120);
                 $project = self::project((int) Http::in('id'), $userId);
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
-                $palette = $cover['palette'];
-                $spec = [
-                    'layout'  => $palette['layout'] ?? 'bloc',
-                    'motif'   => $palette['motif'] ?? CoverStudio::motifFor((string) ($cover['texts']['title'] ?? '')),
-                    'palette' => $palette + ['name' => 'perso'],
-                ];
                 $illus = CoverStudio::illusPath((int) $project['id']);
-                $jpeg = CoverStudio::frontJpeg($spec, $cover['texts'], is_file($illus) ? $illus : null);
+                $els = Covers::frontElements($cover, is_file($illus));
+                $jpeg = CoverStudio::jpegFromElements($els, is_file($illus) ? $illus : null);
                 header('Content-Type: image/jpeg');
                 header('Cache-Control: no-store');
                 if (Http::in('download')) {
@@ -334,6 +363,66 @@ final class Router
                 header('Content-Length: ' . strlen($jpeg));
                 echo $jpeg;
                 exit;
+
+            case 'coverstudio/illus-file':
+                $project = self::project((int) Http::in('id'), $userId);
+                $file = CoverStudio::illusPath((int) $project['id']);
+                if (!is_file($file)) {
+                    http_response_code(404);
+                    exit;
+                }
+                header('Content-Type: image/jpeg');
+                header('Cache-Control: private, max-age=60');
+                header('Content-Length: ' . (string) filesize($file));
+                readfile($file);
+                exit;
+
+            case 'coverstudio/back':
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $jpeg = CoverStudio::jpegFromElements(CoverStudio::backElements($cover['palette'], $cover['texts']), null);
+                header('Content-Type: image/jpeg');
+                header('Cache-Control: no-store');
+                header('Content-Length: ' . strlen($jpeg));
+                echo $jpeg;
+                exit;
+
+            case 'export/cover-pdf':
+                // Couverture broché COMPLÈTE (4ème + tranche + 1ère, fond perdu,
+                // zone code-barres, 300 dpi) en UN SEUL PDF — le format exigé
+                // par KDP pour l'impression, téléversable tel quel.
+                @set_time_limit(300);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $geometry = \App\Services\Layout::geometry($project);
+                $illus = CoverStudio::illusPath((int) $project['id']);
+                $frontEls = Covers::frontElements($cover, is_file($illus));
+                $backEls = CoverStudio::backElements($cover['palette'], $cover['texts']);
+                $wrap = CoverStudio::wrapImage($frontEls, $backEls, $cover['palette'], $cover['texts'], $geometry, is_file($illus) ? $illus : null);
+
+                $exportDir = (string) Config::get('paths.exports');
+                if (!is_dir($exportDir)) {
+                    mkdir($exportDir, 0775, true);
+                }
+                $jpgFile = $exportDir . '/couverture-' . (int) $project['id'] . '-wrap.jpg';
+                imagejpeg($wrap, $jpgFile, 95);
+                imagedestroy($wrap);
+
+                class_exists(\App\Services\PdfBook::class); // charge MiniPdf
+                $mm = fn (float $v): float => $v * 72 / 25.4;
+                $bleed = (float) $geometry['bleed_mm'];
+                $pageW = $mm($bleed + $geometry['w_mm'] + $geometry['spine_mm'] + $geometry['w_mm'] + $bleed);
+                $pageH = $mm($geometry['h_mm'] + 2 * $bleed);
+                $pdf = new \App\Services\MiniPdf($pageW, $pageH);
+                $pdf->newPage();
+                $name = $pdf->addJpeg($jpgFile);
+                if ($name !== null) {
+                    $pdf->image($name, 0, 0, $pageW, $pageH);
+                }
+                $file = $exportDir . '/couverture-' . (int) $project['id'] . '-kdp.pdf';
+                file_put_contents($file, $pdf->build());
+                self::download($file, 'couverture-broche-kdp.pdf', 'application/pdf');
 
             case 'covers/validate':
                 Http::requirePost();

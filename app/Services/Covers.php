@@ -39,9 +39,45 @@ final class Covers
         return $out;
     }
 
+    /** Colonne layout_json (éléments de l'éditeur) : migration automatique. */
+    private static function ensureLayoutColumn(): void
+    {
+        try {
+            Db::one('SELECT layout_json FROM covers LIMIT 1');
+        } catch (\PDOException $e) {
+            try {
+                Db::pdo()->exec('ALTER TABLE covers ADD COLUMN layout_json MEDIUMTEXT NULL');
+            } catch (\Throwable $inner) {
+                // concurrence : une autre requête a pu l'ajouter
+            }
+        }
+    }
+
+    /** Enregistre les éléments de l'éditeur + synchronise les textes canon. */
+    public static function saveLayout(int $projectId, array $els): array
+    {
+        self::ensureLayoutColumn();
+        $clean = CoverStudio::sanitizeElements($els);
+        Db::run(
+            'UPDATE covers SET layout_json = ?, updated_at = ? WHERE project_id = ?',
+            [json_encode($clean, JSON_UNESCAPED_UNICODE), Db::now(), $projectId]
+        );
+        // Les textes des éléments title/tagline/subtitle restent la référence
+        $row = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
+        $texts = json_decode((string) ($row['texts'] ?? ''), true) ?: [];
+        foreach ($clean as $el) {
+            if (($el['type'] ?? '') === 'text' && in_array($el['id'] ?? '', ['title', 'tagline', 'subtitle'], true)) {
+                $texts[$el['id']] = $el['text'];
+            }
+        }
+        Db::run('UPDATE covers SET texts = ? WHERE project_id = ?', [json_encode($texts, JSON_UNESCAPED_UNICODE), $projectId]);
+        return $clean;
+    }
+
     /** Charge (ou initialise) la couverture d'un projet. */
     public static function get(array $project, ?array $concept, array $user): array
     {
+        self::ensureLayoutColumn();
         $projectId = (int) $project['id'];
         $row = Db::one('SELECT * FROM covers WHERE project_id = ?', [$projectId]);
         if (!$row) {
@@ -64,7 +100,28 @@ final class Covers
         }
         $row['palette'] = json_decode((string) $row['palette'], true) ?: [];
         $row['texts'] = json_decode((string) $row['texts'], true) ?: [];
+        $row['els'] = json_decode((string) ($row['layout_json'] ?? ''), true) ?: null;
+        unset($row['layout_json']);
         return $row;
+    }
+
+    /**
+     * Éléments effectifs de la 1ère de couverture : ceux édités, sinon la
+     * mise en page courante convertie en éléments.
+     */
+    public static function frontElements(array $cover, bool $hasIllustration): array
+    {
+        if (is_array($cover['els']) && $cover['els']) {
+            return $cover['els'];
+        }
+        $palette = $cover['palette'];
+        return CoverStudio::layoutElements(
+            (string) ($palette['layout'] ?? 'affiche'),
+            $palette,
+            (string) ($palette['motif'] ?? CoverStudio::motifFor((string) ($cover['texts']['title'] ?? ''))),
+            $cover['texts'],
+            $hasIllustration
+        );
     }
 
     public static function save(int $projectId, string $template, array $palette, array $texts): void
@@ -95,6 +152,25 @@ final class Covers
                 $projectId,
             ]
         );
+
+        // Répercute les textes canon dans les éléments édités (titre, accroche…)
+        self::ensureLayoutColumn();
+        $row = Db::one('SELECT layout_json FROM covers WHERE project_id = ?', [$projectId]);
+        $els = json_decode((string) ($row['layout_json'] ?? ''), true);
+        if (is_array($els) && $els) {
+            $changed = false;
+            foreach ($els as &$el) {
+                $id = $el['id'] ?? '';
+                if (($el['type'] ?? '') === 'text' && isset($textsClean[$id]) && $textsClean[$id] !== ($el['text'] ?? null)) {
+                    $el['text'] = $textsClean[$id];
+                    $changed = true;
+                }
+            }
+            unset($el);
+            if ($changed) {
+                Db::run('UPDATE covers SET layout_json = ? WHERE project_id = ?', [json_encode($els, JSON_UNESCAPED_UNICODE), $projectId]);
+            }
+        }
     }
 
     /** Texte de 4ème de couverture + accroche + bio générés par Gemini. */

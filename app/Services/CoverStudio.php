@@ -6,20 +6,22 @@ namespace App\Services;
 use App\Core\Config;
 
 /**
- * Studio de couvertures — génération d'images RASTER (GD), 100 % serveur.
+ * Studio de couvertures — moteur à ÉLÉMENTS libres, rendu GD haute résolution.
  *
- * Produit des couvertures flat design variées (façon générateur de logo) :
- * plusieurs mises en page × palettes × motifs vectoriels flat, que l'auteur
- * parcourt et valide. Optionnellement, une illustration IA (Gemini image,
- * « nano banana ») est compositée dans la zone image de la maquette.
+ * La couverture est une liste d'éléments éditables (fond, blocs, motif,
+ * illustration, textes) avec position/taille en % du format, police Google
+ * Fonts embarquée, graisse, italique, alignement et couleur par élément.
+ * L'éditeur visuel du navigateur manipule ces éléments (glisser-déposer,
+ * traits d'alignement) ; le serveur rend le JPEG final 1600×2560.
  *
- * Rendu serveur = pas de « tainted canvas », export JPG/PNG fiable, polices
- * embarquées (app/fonts), qualité impression.
+ * Les « mises en page » historiques (affiche, bloc, cercle…) deviennent des
+ * générateurs d'éléments : choisir une version = repartir d'un jeu d'éléments
+ * que l'on peut ensuite retoucher librement.
  */
 final class CoverStudio
 {
-    private const W = 1600;   // largeur eBook (px)
-    private const H = 2560;   // hauteur eBook (px) — ratio 1.6 conseillé par KDP
+    public const W = 1600;
+    public const H = 2560;
 
     /** Palettes flat curées : c1 fond · c2 accent · c3 clair · c4 encre. */
     public const PALETTES = [
@@ -37,18 +39,43 @@ final class CoverStudio
 
     public const MOTIFS = ['soleil', 'arches', 'montagnes', 'vagues', 'pastilles', 'feuille', 'etoile', 'blob'];
 
-    // ── API haut niveau ────────────────────────────────────────────────────
+    /**
+     * Polices Google Fonts embarquées (app/fonts, licence OFL).
+     * slug => [label, fichier, fichier italique|null, famille CSS (aperçu navigateur)]
+     */
+    public const FONTS = [
+        'instrument-serif' => ['Instrument Serif',  'InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', "'Instrument Serif', serif"],
+        'playfair'         => ['Playfair Display',  'PlayfairDisplay.ttf',         'PlayfairDisplay-Italic.ttf', "'Playfair Display', serif"],
+        'dm-serif'         => ['DM Serif Display',  'DMSerifDisplay.ttf',          'DMSerifDisplay-Italic.ttf',  "'DM Serif Display', serif"],
+        'abril'            => ['Abril Fatface',     'AbrilFatface.ttf',            null,                         "'Abril Fatface', serif"],
+        'lora'             => ['Lora',              'Lora.ttf',                    'Lora-Italic.ttf',            "'Lora', serif"],
+        'montserrat'       => ['Montserrat',        'Montserrat.ttf',              null,                         "'Montserrat', sans-serif"],
+        'poppins'          => ['Poppins',           'Poppins-SemiBold.ttf',        null,                         "'Poppins', sans-serif"],
+        'oswald'           => ['Oswald',            'Oswald.ttf',                  null,                         "'Oswald', sans-serif"],
+        'bebas'            => ['Bebas Neue',        'BebasNeue.ttf',               null,                         "'Bebas Neue', sans-serif"],
+        'josefin'          => ['Josefin Sans',      'JosefinSans.ttf',             null,                         "'Josefin Sans', sans-serif"],
+        'nunito'           => ['Nunito',            'Nunito.ttf',                  null,                         "'Nunito', sans-serif"],
+        'plex-mono'        => ['IBM Plex Mono',     'IBMPlexMono-Medium.ttf',      null,                         "'IBM Plex Mono', monospace"],
+        'instrument-sans'  => ['Instrument Sans',   'InstrumentSans.ttf',          null,                         "'Instrument Sans', sans-serif"],
+    ];
+
+    /** Registre pour l'interface (sélecteur avec aperçu). */
+    public static function fonts(): array
+    {
+        return array_map(
+            fn ($slug, $def) => ['slug' => $slug, 'label' => $def[0], 'css' => $def[3], 'has_italic' => $def[2] !== null],
+            array_keys(self::FONTS),
+            self::FONTS
+        );
+    }
 
     public static function palettes(): array
     {
         return self::PALETTES;
     }
 
-    /**
-     * Jeu de variantes (façon générateur de logo) : mises en page × palettes ×
-     * motifs, variées et déterministes pour un seed donné (« Régénérer » = seed
-     * différent). @return array<int,array{layout:string,palette:array,motif:string}>
-     */
+    // ── Variantes (générateur de versions) ─────────────────────────────────
+
     public static function variants(int $seed, int $count = 8): array
     {
         $rng = abs($seed) % 2147483647 ?: 1;
@@ -57,27 +84,23 @@ final class CoverStudio
             return $rng;
         };
         $out = [];
-        $nL = count(self::LAYOUTS);
-        $nP = count(self::PALETTES);
-        $nM = count(self::MOTIFS);
         for ($i = 0; $i < $count; $i++) {
             $out[] = [
-                'layout'  => self::LAYOUTS[($i + intdiv($seed, 3)) % $nL],
-                'palette' => self::PALETTES[($next() + $i) % $nP],
-                'motif'   => self::MOTIFS[$next() % $nM],
+                'layout'  => self::LAYOUTS[($i + intdiv($seed, 3)) % count(self::LAYOUTS)],
+                'palette' => self::PALETTES[($next() + $i) % count(self::PALETTES)],
+                'motif'   => self::MOTIFS[$next() % count(self::MOTIFS)],
             ];
         }
         return $out;
     }
 
-    /** Devine un motif flat pertinent à partir du thème/titre. */
     public static function motifFor(string $text): string
     {
         $t = mb_strtolower($text);
         $map = [
             'soleil'    => ['matin', 'réveil', 'soleil', 'jour', 'lumièr', 'énergie', 'été'],
             'montagnes' => ['montagne', 'randonn', 'voyage', 'sommet', 'objectif', 'défi'],
-            'vagues'    => ['mer', 'océan', 'sommeil', 'calme', 'respir', 'zen', 'eau', 'surf'],
+            'vagues'    => ['mer', 'océan', 'sommeil', 'calme', 'respir', 'zen', 'eau', 'glace', 'surf'],
             'feuille'   => ['jardin', 'plante', 'nature', 'bio', 'vegan', 'cuisine', 'santé', 'green'],
             'pastilles' => ['argent', 'budget', 'finance', 'habitude', 'point', 'method'],
             'arches'    => ['carnet', 'journal', 'gratitude', 'écrit', 'porte'],
@@ -93,31 +116,231 @@ final class CoverStudio
         return 'blob';
     }
 
-    /** Vignette PNG (data URI) pour le sélecteur de variantes. */
-    public static function thumbnail(array $spec, array $texts): string
+    // ── Mises en page → ÉLÉMENTS ───────────────────────────────────────────
+
+    /**
+     * Construit le jeu d'éléments initial d'une mise en page nommée.
+     * Chaque élément : id, type (rect|motif|image|text), x/y/w/h en % du
+     * format, et pour les textes : text, font, size (% de la largeur),
+     * weight, italic, align, color, lh, maxLines.
+     * NB : l'auteur n'apparaît volontairement pas en 1ère de couverture.
+     */
+    public static function layoutElements(string $layout, array $palette, string $motif, array $texts, bool $hasIllustration): array
     {
-        $im = self::renderFront($spec, $texts, null);
-        $tw = 320;
-        $th = (int) round($tw * self::H / self::W);
-        $thumb = imagecreatetruecolor($tw, $th);
-        imagecopyresampled($thumb, $im, 0, 0, 0, 0, $tw, $th, self::W, self::H);
-        ob_start();
-        imagepng($thumb, null, 6);
-        $png = (string) ob_get_clean();
-        imagedestroy($im);
-        imagedestroy($thumb);
-        return 'data:image/png;base64,' . base64_encode($png);
+        $c1 = $palette['c1'] ?? '#1B2A4A';
+        $c2 = $palette['c2'] ?? '#C4571F';
+        $c3 = $palette['c3'] ?? '#F4EFE4';
+        $c4 = $palette['c4'] ?? '#12203A';
+        $title    = trim((string) ($texts['title'] ?? 'Titre du livre'));
+        $subtitle = trim((string) ($texts['subtitle'] ?? ''));
+        $tagline  = trim((string) ($texts['tagline'] ?? ''));
+
+        $text = function (string $id, string $content, array $o) : array {
+            return array_merge([
+                'id' => $id, 'type' => 'text', 'text' => $content,
+                'font' => 'instrument-serif', 'size' => 5.5, 'weight' => 400,
+                'italic' => false, 'align' => 'left', 'lh' => 1.18, 'maxLines' => 4,
+            ], $o);
+        };
+        $img = fn (float $x, float $y, float $w, float $h, bool $round = false) =>
+            ['id' => 'illus', 'type' => 'image', 'x' => $x, 'y' => $y, 'w' => $w, 'h' => $h, 'round' => $round];
+        $mot = fn (float $x, float $y, float $w, float $h, string $ca, string $cb) =>
+            ['id' => 'motif', 'type' => 'motif', 'motif' => $motif, 'x' => $x, 'y' => $y, 'w' => $w, 'h' => $h, 'color' => $ca, 'color2' => $cb];
+        $rect = fn (string $id, float $x, float $y, float $w, float $h, string $c) =>
+            ['id' => $id, 'type' => 'rect', 'x' => $x, 'y' => $y, 'w' => $w, 'h' => $h, 'color' => $c];
+
+        $els = [];
+        switch ($layout) {
+            case 'affiche':
+                $els[] = $rect('fond', 0, 0, 100, 100, $c1);
+                $els[] = $hasIllustration ? $img(0, 0, 100, 70) : $mot(24, 12, 52, 42, $c2, $c3);
+                $els[] = $rect('bandeau', 0, 70, 100, 30, $c1);
+                $els[] = $rect('filet', 0, 70, 100, 0.65, $c2);
+                $els[] = $text('title', $title, ['x' => 8, 'y' => 74.5, 'w' => 84, 'size' => 6.0, 'color' => $c3, 'maxLines' => 3]);
+                if ($tagline)  $els[] = $text('tagline', $tagline, ['x' => 8, 'y' => 89, 'w' => 84, 'size' => 3.0, 'color' => $c2, 'italic' => true, 'maxLines' => 2]);
+                break;
+
+            case 'bloc':
+                $els[] = $rect('fond', 0, 0, 100, 100, $c3);
+                $els[] = $rect('bloc', 0, 0, 100, 66, $c1);
+                $els[] = $rect('filet', 0, 66, 100, 0.65, $c2);
+                $els[] = $hasIllustration ? $img(8, 16, 84, 32) : $mot(26, 14, 48, 34, $c2, $c3);
+                $els[] = $text('title', $title, ['x' => 8, 'y' => 50, 'w' => 84, 'size' => 6.0, 'color' => $c3, 'maxLines' => 4]);
+                if ($tagline)  $els[] = $text('tagline', $tagline, ['x' => 8, 'y' => 70, 'w' => 84, 'size' => 3.2, 'color' => $c4, 'italic' => true, 'maxLines' => 2]);
+                if ($subtitle) $els[] = $text('subtitle', $subtitle, ['x' => 8, 'y' => 84, 'w' => 84, 'size' => 2.1, 'color' => $c4, 'font' => 'plex-mono', 'maxLines' => 3]);
+                break;
+
+            case 'cercle':
+                $els[] = $rect('fond', 0, 0, 100, 100, $c3);
+                $els[] = ['id' => 'cercle', 'type' => 'ellipse', 'x' => 16, 'y' => 8, 'w' => 68, 'h' => 42.5, 'color' => $c1];
+                $els[] = $hasIllustration ? $img(20, 10.5, 60, 37.5, true) : $mot(30, 16, 40, 26, $c2, $c3);
+                $els[] = $text('title', $title, ['x' => 10, 'y' => 58, 'w' => 80, 'size' => 5.6, 'color' => $c4, 'align' => 'center', 'maxLines' => 4]);
+                if ($tagline) $els[] = $text('tagline', $tagline, ['x' => 14, 'y' => 84, 'w' => 72, 'size' => 3.0, 'color' => $c2, 'italic' => true, 'align' => 'center', 'maxLines' => 2]);
+                break;
+
+            case 'bandeau':
+                $els[] = $rect('fond', 0, 0, 100, 100, $c3);
+                $els[] = $hasIllustration ? $img(8, 10, 84, 36) : $mot(24, 12, 52, 32, $c1, $c2);
+                $els[] = $rect('bandeau', 0, 50, 100, 28, $c1);
+                $els[] = $text('title', $title, ['x' => 8, 'y' => 54, 'w' => 84, 'size' => 5.8, 'color' => $c3, 'maxLines' => 3]);
+                if ($tagline) $els[] = $text('tagline', $tagline, ['x' => 8, 'y' => 81.5, 'w' => 84, 'size' => 3.1, 'color' => $c4, 'italic' => true, 'maxLines' => 2]);
+                break;
+
+            case 'duo':
+                $els[] = $rect('fond', 0, 0, 100, 56, $c3);
+                $els[] = $rect('bloc', 0, 56, 100, 44, $c1);
+                $els[] = $hasIllustration ? $img(8, 8, 84, 40) : $mot(26, 10, 48, 36, $c2, $c1);
+                $els[] = $text('title', $title, ['x' => 8, 'y' => 61, 'w' => 84, 'size' => 5.9, 'color' => $c3, 'maxLines' => 4]);
+                if ($tagline) $els[] = $text('tagline', $tagline, ['x' => 8, 'y' => 85, 'w' => 84, 'size' => 3.1, 'color' => $c2, 'italic' => true, 'maxLines' => 2]);
+                break;
+
+            case 'diagonale':
+                $els[] = $rect('fond', 0, 0, 100, 100, $c1);
+                $els[] = ['id' => 'diag', 'type' => 'poly', 'points' => [[0, 0], [100, 0], [100, 42], [0, 62]], 'color' => $c2, 'x' => 0, 'y' => 0, 'w' => 100, 'h' => 62];
+                $els[] = ['id' => 'diag2', 'type' => 'poly', 'points' => [[0, 62], [100, 42], [100, 50], [0, 70]], 'color' => $c3, 'x' => 0, 'y' => 42, 'w' => 100, 'h' => 28];
+                $els[] = $hasIllustration ? $img(58, 6, 34, 21, true) : $mot(60, 6, 30, 19, $c1, $c3);
+                $els[] = $text('title', $title, ['x' => 8, 'y' => 71, 'w' => 84, 'size' => 6.0, 'color' => $c3, 'maxLines' => 3]);
+                if ($tagline) $els[] = $text('tagline', $tagline, ['x' => 8, 'y' => 90, 'w' => 84, 'size' => 3.0, 'color' => $c2, 'italic' => true, 'maxLines' => 2]);
+                break;
+
+            case 'cadre':
+            default:
+                $els[] = $rect('fond', 0, 0, 100, 100, $c3);
+                $els[] = ['id' => 'cadre', 'type' => 'frame', 'x' => 3.75, 'y' => 2.35, 'w' => 92.5, 'h' => 95.3, 'color' => $c1, 'thick' => 0.4];
+                $els[] = $hasIllustration ? $img(31, 12, 38, 23.75, true) : $mot(34, 13, 32, 20, $c2, $c3);
+                $els[] = $text('title', $title, ['x' => 12, 'y' => 46, 'w' => 76, 'size' => 5.6, 'color' => $c4, 'align' => 'center', 'maxLines' => 4]);
+                if ($tagline) $els[] = $text('tagline', $tagline, ['x' => 16, 'y' => 72, 'w' => 68, 'size' => 3.0, 'color' => $c2, 'italic' => true, 'align' => 'center', 'maxLines' => 3]);
+                break;
+        }
+        return $els;
     }
 
-    /** JPEG pleine résolution de la 1ère de couverture (eBook / aperçu). */
-    public static function frontJpeg(array $spec, array $texts, ?string $illustrationPath, int $quality = 92): string
+    // ── Rendu GD des éléments ──────────────────────────────────────────────
+
+    public static function renderElements(array $els, ?string $illustrationPath): \GdImage
     {
-        $im = self::renderFront($spec, $texts, $illustrationPath);
-        ob_start();
-        imagejpeg($im, null, $quality);
-        $jpg = (string) ob_get_clean();
-        imagedestroy($im);
-        return $jpg;
+        $W = self::W;
+        $H = self::H;
+        $im = imagecreatetruecolor($W, $H);
+        imagealphablending($im, true);
+        imageantialias($im, true);
+        imagefilledrectangle($im, 0, 0, $W, $H, imagecolorallocate($im, 245, 241, 230));
+
+        $px = fn (float $p): int => (int) round($p * $W / 100);
+        $py = fn (float $p): int => (int) round($p * $H / 100);
+        $illus = $illustrationPath && is_file($illustrationPath) ? @imagecreatefromjpeg($illustrationPath) : null;
+
+        foreach ($els as $el) {
+            $type = (string) ($el['type'] ?? '');
+            $color = self::alloc($im, (string) ($el['color'] ?? '#1B2A4A'));
+            $x = $px((float) ($el['x'] ?? 0));
+            $y = $py((float) ($el['y'] ?? 0));
+            $w = $px((float) ($el['w'] ?? 10));
+            $h = $py((float) ($el['h'] ?? 10));
+
+            switch ($type) {
+                case 'rect':
+                    imagefilledrectangle($im, $x, $y, $x + $w, $y + $h, $color);
+                    break;
+                case 'ellipse':
+                    imagefilledellipse($im, $x + (int) ($w / 2), $y + (int) ($h / 2), $w, $h, $color);
+                    break;
+                case 'poly':
+                    $pts = [];
+                    foreach ((array) ($el['points'] ?? []) as $pt) {
+                        $pts[] = $px((float) $pt[0]);
+                        $pts[] = $py((float) $pt[1]);
+                    }
+                    if (count($pts) >= 6) {
+                        imagefilledpolygon($im, $pts, $color);
+                    }
+                    break;
+                case 'frame':
+                    imagesetthickness($im, max(2, $px((float) ($el['thick'] ?? 0.4))));
+                    imagerectangle($im, $x, $y, $x + $w, $y + $h, $color);
+                    imagesetthickness($im, 1);
+                    break;
+                case 'motif':
+                    self::drawMotif(
+                        $im, (string) ($el['motif'] ?? 'blob'),
+                        $x + $w / 2, $y + $h / 2, min($w, $h) * 0.42,
+                        $color, self::alloc($im, (string) ($el['color2'] ?? '#F4EFE4'))
+                    );
+                    break;
+                case 'image':
+                    if ($illus) {
+                        self::drawCover($im, $illus, $x, $y, $w, $h, !empty($el['round']));
+                    } else {
+                        imagefilledrectangle($im, $x, $y, $x + $w, $y + $h, self::alloc($im, '#D9D0BE'));
+                    }
+                    break;
+                case 'text':
+                    self::drawTextElement($im, $el, $x, $y, $w);
+                    break;
+            }
+        }
+        if ($illus) {
+            imagedestroy($illus);
+        }
+        return $im;
+    }
+
+    private static function drawTextElement(\GdImage $im, array $el, int $x, int $y, int $w): void
+    {
+        $content = trim((string) ($el['text'] ?? ''));
+        if ($content === '') {
+            return;
+        }
+        $font = self::fontFile((string) ($el['font'] ?? 'instrument-serif'), !empty($el['italic']));
+        $size = max(14, (int) round((float) ($el['size'] ?? 5.5) * self::W / 100));
+        $lh = (float) ($el['lh'] ?? 1.18);
+        $maxLines = (int) ($el['maxLines'] ?? 0);
+        $align = (string) ($el['align'] ?? 'left');
+        $bold = (int) ($el['weight'] ?? 400) >= 600;
+        $color = self::alloc($im, (string) ($el['color'] ?? '#1A1A17'));
+
+        // Paragraphes séparés par une ligne vide ('' = espace vertical)
+        $build = function (int $sz) use ($font, $content, $w): array {
+            $lines = [];
+            foreach (preg_split('/\n\s*\n/', $content) ?: [] as $i => $paragraph) {
+                if ($i > 0) {
+                    $lines[] = '';
+                }
+                foreach (self::wrapPath($font, trim($paragraph), $sz, $w) as $line) {
+                    $lines[] = $line;
+                }
+            }
+            return $lines;
+        };
+        $lines = $build($size);
+        if ($maxLines > 0) {
+            while (count($lines) > $maxLines && $size > 20) {
+                $size = (int) ($size * 0.93);
+                $lines = $build($size);
+            }
+            $lines = array_slice($lines, 0, $maxLines);
+        }
+        $lineH = (int) round($size * $lh * 1.35); // pt → px approx.
+        $baseline = $y + (int) round($size * 1.15);
+        $off = max(1, (int) round($size / 34)); // épaisseur du faux gras
+
+        foreach ($lines as $i => $line) {
+            if ($line === '') {
+                continue; // interligne de paragraphe
+            }
+            $lw = self::widthPath($font, $line, $size);
+            $lx = match ($align) {
+                'center' => $x + (int) (($w - $lw) / 2),
+                'right'  => $x + $w - $lw,
+                default  => $x,
+            };
+            $ly = $baseline + $i * $lineH;
+            imagettftext($im, $size, 0, $lx, $ly, $color, $font, $line);
+            if ($bold) {
+                imagettftext($im, $size, 0, $lx + $off, $ly, $color, $font, $line);
+                imagettftext($im, $size, 0, $lx, $ly + $off, $color, $font, $line);
+            }
+        }
     }
 
     // ── Illustration IA (nano banana) ──────────────────────────────────────
@@ -132,7 +355,6 @@ final class CoverStudio
         return (string) Config::get('paths.uploads') . '/cover-ref-' . $projectId . '.jpg';
     }
 
-    /** Prompt par défaut, construit depuis le livre. */
     public static function defaultPrompt(array $texts): string
     {
         $title = trim((string) ($texts['title'] ?? ''));
@@ -140,11 +362,6 @@ final class CoverStudio
             . 'composition centrée, fond uni.';
     }
 
-    /**
-     * Génère l'illustration flat design via Gemini image et l'enregistre.
-     * Le style flat est imposé autour du prompt utilisateur ; une image de
-     * référence (refPath) est jointe si présente.
-     */
     public static function generateIllustration(int $projectId, string $userPrompt, array $palette): string
     {
         $colors = implode(', ', array_filter([
@@ -174,147 +391,212 @@ final class CoverStudio
         return self::illusPath($projectId);
     }
 
-    // ── Rendu d'une 1ère de couverture ─────────────────────────────────────
-
-    public static function renderFront(array $spec, array $texts, ?string $illustrationPath): \GdImage
+    /**
+     * Éléments de la 4ÈME de couverture (auteur + textes de vente), même
+     * moteur que la 1ère. La zone code-barres KDP est réservée en blanc.
+     */
+    public static function backElements(array $palette, array $texts): array
     {
-        $W = self::W;
-        $H = self::H;
-        $im = imagecreatetruecolor($W, $H);
+        $c1 = $palette['c1'] ?? '#1B2A4A';
+        $c2 = $palette['c2'] ?? '#C4571F';
+        $c3 = $palette['c3'] ?? '#F4EFE4';
+        $tagline = trim((string) ($texts['tagline'] ?? ''));
+        $back    = trim((string) ($texts['back_text'] ?? ''));
+        $bio     = trim((string) ($texts['bio'] ?? ''));
+        $author  = trim((string) ($texts['author'] ?? ''));
+
+        $els = [];
+        $els[] = ['id' => 'fond', 'type' => 'rect', 'x' => 0, 'y' => 0, 'w' => 100, 'h' => 100, 'color' => $c1];
+        $els[] = ['id' => 'filet', 'type' => 'rect', 'x' => 8, 'y' => 7.2, 'w' => 84, 'h' => 0.16, 'color' => $c2];
+        if ($tagline !== '') {
+            $els[] = ['id' => 'tagline', 'type' => 'text', 'text' => $tagline, 'x' => 8, 'y' => 9.5, 'w' => 84,
+                      'size' => 3.4, 'font' => 'instrument-serif', 'italic' => true, 'weight' => 400,
+                      'align' => 'left', 'color' => $c2, 'lh' => 1.25, 'maxLines' => 3];
+        }
+        if ($back !== '') {
+            $els[] = ['id' => 'back_text', 'type' => 'text', 'text' => $back, 'x' => 8, 'y' => 20, 'w' => 84,
+                      'size' => 2.2, 'font' => 'instrument-sans', 'weight' => 400,
+                      'align' => 'left', 'color' => $c3, 'lh' => 1.5, 'maxLines' => 0];
+        }
+        if ($bio !== '') {
+            $els[] = ['id' => 'filet2', 'type' => 'rect', 'x' => 8, 'y' => 70, 'w' => 10, 'h' => 0.16, 'color' => $c2];
+            $els[] = ['id' => 'bio', 'type' => 'text', 'text' => ($author !== '' ? $author . ' — ' : '') . $bio,
+                      'x' => 8, 'y' => 72, 'w' => 84, 'size' => 1.9, 'font' => 'instrument-sans', 'weight' => 400,
+                      'align' => 'left', 'color' => $c3, 'lh' => 1.5, 'maxLines' => 5];
+        } elseif ($author !== '') {
+            $els[] = ['id' => 'bio', 'type' => 'text', 'text' => $author, 'x' => 8, 'y' => 72, 'w' => 84,
+                      'size' => 2.0, 'font' => 'plex-mono', 'weight' => 400, 'align' => 'left', 'color' => $c3,
+                      'lh' => 1.4, 'maxLines' => 1];
+        }
+        return $els;
+    }
+
+    /**
+     * Couverture broché complète — 4ème + tranche + 1ère en UNE image
+     * 300 dpi, fond perdu compris : le gabarit exact attendu par KDP.
+     *
+     * @param array $geometry  Layout::geometry() du projet (mm + dos)
+     */
+    public static function wrapImage(array $frontEls, array $backEls, array $palette, array $texts, array $geometry, ?string $illustrationPath): \GdImage
+    {
+        $dpi = 300;
+        $mmToPx = fn (float $mm): int => (int) round($mm / 25.4 * $dpi);
+
+        $bleed = (float) $geometry['bleed_mm'];
+        $trimW = (float) $geometry['w_mm'];
+        $trimH = (float) $geometry['h_mm'];
+        $spine = (float) $geometry['spine_mm'];
+
+        $totalW = $mmToPx($bleed + $trimW + $spine + $trimW + $bleed);
+        $totalH = $mmToPx($trimH + 2 * $bleed);
+        $panelW = $mmToPx($trimW + $bleed);   // chaque face déborde dans le fond perdu extérieur
+        $panelH = $totalH;
+        $spineW = $mmToPx($spine);
+
+        $wrap = imagecreatetruecolor($totalW, $totalH);
+        $c1 = self::alloc($wrap, (string) ($palette['c1'] ?? '#1B2A4A'));
+        imagefilledrectangle($wrap, 0, 0, $totalW, $totalH, $c1);
+
+        // Faces rendues en haute résolution puis recadrées « cover » sur leur panneau
+        $back = self::renderElements($backEls, null);
+        self::drawCover($wrap, $back, 0, 0, $panelW, $panelH, false);
+        imagedestroy($back);
+
+        $front = self::renderElements($frontEls, $illustrationPath);
+        self::drawCover($wrap, $front, $totalW - $panelW, 0, $panelW, $panelH, false);
+        imagedestroy($front);
+
+        // Tranche : fond + titre/auteur verticaux si assez épaisse (règle KDP ≈ 6,35 mm)
+        $spineX = $panelW;
+        imagefilledrectangle($wrap, $spineX, 0, $spineX + $spineW, $totalH, $c1);
+        if ($spine >= 6.35) {
+            $c3 = self::alloc($wrap, (string) ($palette['c3'] ?? '#F4EFE4'));
+            $label = trim((string) ($texts['title'] ?? ''));
+            $author = mb_strtoupper(trim((string) ($texts['author'] ?? '')));
+            $font = self::fontFile('instrument-serif');
+            $size = (int) max(18, min($spineW * 0.42, 60));
+            // Texte pivoté à -90° : lecture de haut en bas (dos vers la droite)
+            $box = imagettfbbox($size, 0, $font, $label);
+            $textW = abs($box[2] - $box[0]);
+            $ty = (int) (($totalH - $textW) / 2);
+            imagettftext($wrap, $size, -90, $spineX + (int) ($spineW * 0.62), $ty, $c3, $font, $label);
+            if ($author !== '') {
+                $fontA = self::fontFile('plex-mono');
+                $sizeA = (int) max(12, $size * 0.5);
+                $boxA = imagettfbbox($sizeA, 0, $fontA, $author);
+                imagettftext($wrap, $sizeA, -90, $spineX + (int) ($spineW * 0.30), $ty + $textW + $mmToPx(8) + abs($boxA[2] - $boxA[0]), $c3, $fontA, $author);
+            }
+        }
+
+        // Zone code-barres KDP : blanc, 50,8 × 30,5 mm, à 6,35 mm des bords de coupe de la 4ème
+        $white = imagecolorallocate($wrap, 255, 255, 255);
+        $bw = $mmToPx((float) Config::get('kdp.barcode_w_mm', 50.8));
+        $bh = $mmToPx((float) Config::get('kdp.barcode_h_mm', 30.5));
+        $bx = $mmToPx($bleed + $trimW - 6.35) - $bw;
+        $by = $totalH - $mmToPx($bleed + 6.35) - $bh;
+        imagefilledrectangle($wrap, $bx, $by, $bx + $bw, $by + $bh, $white);
+
+        return $wrap;
+    }
+
+    // ── Sorties ────────────────────────────────────────────────────────────
+
+    public static function thumbnailFromElements(array $els, ?string $illustrationPath): string
+    {
+        $im = self::renderElements($els, $illustrationPath);
+        $tw = 320;
+        $th = (int) round($tw * self::H / self::W);
+        $thumb = imagecreatetruecolor($tw, $th);
+        imagecopyresampled($thumb, $im, 0, 0, 0, 0, $tw, $th, self::W, self::H);
+        ob_start();
+        imagepng($thumb, null, 6);
+        $png = (string) ob_get_clean();
+        imagedestroy($im);
+        imagedestroy($thumb);
+        return 'data:image/png;base64,' . base64_encode($png);
+    }
+
+    public static function jpegFromElements(array $els, ?string $illustrationPath, int $quality = 92): string
+    {
+        $im = self::renderElements($els, $illustrationPath);
+        ob_start();
+        imagejpeg($im, null, $quality);
+        $jpg = (string) ob_get_clean();
+        imagedestroy($im);
+        return $jpg;
+    }
+
+    /** PNG transparent d'un motif seul (aperçu dans l'éditeur navigateur). */
+    public static function motifPng(string $type, string $c1, string $c2, int $size = 400): string
+    {
+        $im = imagecreatetruecolor($size, $size);
+        imagesavealpha($im, true);
+        imagealphablending($im, false);
+        imagefill($im, 0, 0, imagecolorallocatealpha($im, 0, 0, 0, 127));
         imagealphablending($im, true);
-        imageantialias($im, true);
-
-        $pal = $spec['palette'] ?? self::PALETTES[0];
-        $c1 = self::alloc($im, $pal['c1']);
-        $c2 = self::alloc($im, $pal['c2']);
-        $c3 = self::alloc($im, $pal['c3']);
-        $c4 = self::alloc($im, $pal['c4']);
-
-        $layout = $spec['layout'] ?? 'bloc';
-        $motif = $spec['motif'] ?? 'blob';
-        $illus = $illustrationPath && is_file($illustrationPath) ? @imagecreatefromjpeg($illustrationPath) : null;
-
-        $title    = trim((string) ($texts['title'] ?? 'Titre du livre'));
-        $subtitle = trim((string) ($texts['subtitle'] ?? ''));
-        $tagline  = trim((string) ($texts['tagline'] ?? ''));
-        $author   = mb_strtoupper(trim((string) ($texts['author'] ?? '')));
-
-        $serif  = self::font('InstrumentSerif-Regular.ttf');
-        $italic = self::font('InstrumentSerif-Italic.ttf');
-        $mono   = self::font('IBMPlexMono-Medium.ttf');
-
-        // Aire d'illustration selon la mise en page (x, y, w, h) ou null
-        $imgArea = null;
-        $M = 130; // marge intérieure
-
-        switch ($layout) {
-            case 'affiche':
-                // L'ILLUSTRATION EN GRAND : pleine page, du bord haut au bandeau
-                // titre — c'est la mise en page appliquée automatiquement après
-                // une génération d'illustration IA.
-                $bandY = (int) round($H * 0.70);
-                if ($illus) {
-                    self::drawCover($im, $illus, 0, 0, $W, $bandY, false);
-                } else {
-                    imagefilledrectangle($im, 0, 0, $W, $bandY, $c1);
-                    self::drawMotif($im, $motif, $W / 2, $bandY / 2, $W * 0.30, $c2, $c3);
-                }
-                // Bandeau titre flat + filet accent
-                imagefilledrectangle($im, 0, $bandY, $W, $H, $c1);
-                imagefilledrectangle($im, 0, $bandY, $W, $bandY + 16, $c2);
-                self::textBlock($im, $serif, $title, $M, $bandY + 150, $W - 2 * $M, 96, 114, $c3, 'left', 3);
-                if ($tagline) self::textBlock($im, $italic, $tagline, $M, $bandY + 150 + 3 * 114 - 40, $W - 2 * $M, 48, 58, $c2, 'left', 2);
-                // Auteur : pastille flat en haut (lisible sur toute image)
-                if ($author) {
-                    $aw = self::width('IBMPlexMono-Medium.ttf', implode('', array_map(fn ($c) => $c . ' ', mb_str_split($author))), 40);
-                    imagefilledrectangle($im, $M - 30, 96, $M + $aw + 40, 208, $c1);
-                    imagefilledrectangle($im, $M - 30, 200, $M + $aw + 40, 208, $c2);
-                    self::line($im, $mono, $author, 40, $M, 168, $c3, 6);
-                }
-                break;
-
-            case 'bloc':
-                imagefilledrectangle($im, 0, 0, $W, $H, $c3);
-                imagefilledrectangle($im, 0, 0, $W, (int) round($H * 0.66), $c1);
-                imagefilledrectangle($im, 0, (int) round($H * 0.66), $W, (int) round($H * 0.66) + 16, $c2);
-                $imgArea = [$M, (int) round($H * 0.20), $W - 2 * $M, (int) round($H * 0.30)];
-                self::motifOrImage($im, $illus, $motif, $imgArea, $c2, $c3);
-                self::textBlock($im, $serif, $title, $M, (int) round($H * 0.50), $W - 2 * $M, 96, 118, $c3, 'left', 4);
-                if ($author) self::line($im, $mono, $author, 44, $M, 150, $c3, 6);
-                if ($tagline) self::textBlock($im, $italic, $tagline, $M, (int) round($H * 0.70), $W - 2 * $M, 52, 62, $c4, 'left', 3);
-                if ($subtitle) self::textBlock($im, $mono, $subtitle, $M, (int) round($H * 0.84), $W - 2 * $M, 34, 46, self::mix($im, $c4, 0.7), 'left', 3);
-                break;
-
-            case 'cercle':
-                imagefilledrectangle($im, 0, 0, $W, $H, $c3);
-                $cx = (int) ($W / 2); $cy = (int) round($H * 0.34); $r = (int) round($W * 0.34);
-                imagefilledellipse($im, $cx, $cy, $r * 2, $r * 2, $c1);
-                $imgArea = [$cx - $r + 40, $cy - $r + 40, ($r - 40) * 2, ($r - 40) * 2];
-                self::motifOrImage($im, $illus, $motif, $imgArea, $c2, $c3, true);
-                if ($author) self::line($im, $mono, $author, 42, 0, (int) round($H * 0.60), $c4, 8, $W);
-                self::textBlock($im, $serif, $title, $M, (int) round($H * 0.64), $W - 2 * $M, 92, 108, $c4, 'center', 4);
-                if ($tagline) self::textBlock($im, $italic, $tagline, (int) ($W * 0.14), (int) round($H * 0.86), (int) ($W * 0.72), 50, 60, $c2, 'center', 2);
-                break;
-
-            case 'bandeau':
-                imagefilledrectangle($im, 0, 0, $W, $H, $c3);
-                self::motifOrImage($im, $illus, $motif, [$M, (int) round($H * 0.12), $W - 2 * $M, (int) round($H * 0.34)], $c1, $c2);
-                imagefilledrectangle($im, 0, (int) round($H * 0.50), $W, (int) round($H * 0.78), $c1);
-                self::textBlock($im, $serif, $title, $M, (int) round($H * 0.545), $W - 2 * $M, 92, 110, $c3, 'left', 4);
-                if ($tagline) self::textBlock($im, $italic, $tagline, $M, (int) round($H * 0.815), $W - 2 * $M, 50, 62, $c4, 'left', 2);
-                if ($author) self::line($im, $mono, $author, 42, $M, (int) round($H * 0.92), $c4, 6);
-                break;
-
-            case 'duo':
-                imagefilledrectangle($im, 0, 0, $W, $H, $c3);
-                imagefilledrectangle($im, 0, (int) round($H * 0.56), $W, $H, $c1);
-                $imgArea = [0, 0, $W, (int) round($H * 0.56)];
-                self::motifOrImage($im, $illus, $motif, [$M, (int) round($H * 0.10), $W - 2 * $M, (int) round($H * 0.36)], $c2, $c1, false, $c3);
-                self::textBlock($im, $serif, $title, $M, (int) round($H * 0.62), $W - 2 * $M, 94, 112, $c3, 'left', 4);
-                if ($tagline) self::textBlock($im, $italic, $tagline, $M, (int) round($H * 0.85), $W - 2 * $M, 50, 62, $c2, 'left', 2);
-                if ($author) self::line($im, $mono, $author, 42, $M, (int) round($H * 0.94), $c3, 6);
-                break;
-
-            case 'diagonale':
-                imagefilledrectangle($im, 0, 0, $W, $H, $c1);
-                imagefilledpolygon($im, [0, 0, $W, 0, $W, (int) round($H * 0.42), 0, (int) round($H * 0.62)], $c2);
-                imagefilledpolygon($im, [0, (int) round($H * 0.62), $W, (int) round($H * 0.42), $W, (int) round($H * 0.50), 0, (int) round($H * 0.70)], $c3);
-                self::motifOrImage($im, $illus, $motif, [$W - 520, 150, 380, 380], $c1, $c3, true);
-                self::textBlock($im, $serif, $title, $M, (int) round($H * 0.70), $W - 2 * $M, 96, 116, $c3, 'left', 4);
-                if ($tagline) self::textBlock($im, $italic, $tagline, $M, (int) round($H * 0.90), $W - 2 * $M, 48, 60, $c2, 'left', 2);
-                if ($author) self::line($im, $mono, $author, 42, $M, 200, $c1, 8);
-                break;
-
-            case 'cadre':
-            default:
-                imagefilledrectangle($im, 0, 0, $W, $H, $c3);
-                self::rectBorder($im, 60, 60, $W - 60, $H - 60, 6, $c1);
-                self::motifOrImage($im, $illus, $motif, [(int) ($W / 2) - 190, (int) round($H * 0.16), 380, 380], $c2, $c3, true);
-                if ($author) self::line($im, $mono, $author, 40, 0, (int) round($H * 0.44), $c4, 8, $W);
-                self::textBlock($im, $serif, $title, (int) ($W * 0.12), (int) round($H * 0.50), (int) ($W * 0.76), 92, 110, $c4, 'center', 4);
-                if ($tagline) self::textBlock($im, $italic, $tagline, (int) ($W * 0.16), (int) round($H * 0.74), (int) ($W * 0.68), 50, 62, $c2, 'center', 3);
-                break;
-        }
-
-        if ($illus) {
-            imagedestroy($illus);
-        }
-        return $im;
+        self::drawMotif($im, $type, $size / 2, $size / 2, $size * 0.42, self::alloc($im, $c1), self::alloc($im, $c2));
+        ob_start();
+        imagepng($im);
+        $png = (string) ob_get_clean();
+        imagedestroy($im);
+        return $png;
     }
 
-    // ── Composition illustration / motif flat ──────────────────────────────
-
-    private static function motifOrImage(\GdImage $im, ?\GdImage $illus, string $motif, array $area, int $shape, int $bg, bool $circle = false, ?int $shape2 = null): void
+    /** Nettoie/valide une liste d'éléments venant du navigateur. */
+    public static function sanitizeElements(array $els): array
     {
-        [$x, $y, $w, $h] = $area;
-        if ($illus) {
-            self::drawCover($im, $illus, $x, $y, $w, $h, $circle);
-            return;
+        $clean = [];
+        foreach (array_slice($els, 0, 30) as $el) {
+            if (!is_array($el)) {
+                continue;
+            }
+            $type = (string) ($el['type'] ?? '');
+            if (!in_array($type, ['rect', 'ellipse', 'poly', 'frame', 'motif', 'image', 'text'], true)) {
+                continue;
+            }
+            $out = [
+                'id'   => preg_replace('/[^a-z0-9_-]/i', '', (string) ($el['id'] ?? uniqid('el'))) ?: uniqid('el'),
+                'type' => $type,
+                'x'    => max(-50, min(150, (float) ($el['x'] ?? 0))),
+                'y'    => max(-50, min(150, (float) ($el['y'] ?? 0))),
+                'w'    => max(0.2, min(200, (float) ($el['w'] ?? 10))),
+                'h'    => max(0.05, min(200, (float) ($el['h'] ?? 10))),
+            ];
+            $hex = fn ($v, $d) => preg_match('/^#[0-9a-fA-F]{3,8}$/', (string) $v) ? (string) $v : $d;
+            $out['color'] = $hex($el['color'] ?? '', '#1B2A4A');
+            if ($type === 'motif') {
+                $out['motif'] = in_array($el['motif'] ?? '', self::MOTIFS, true) ? $el['motif'] : 'blob';
+                $out['color2'] = $hex($el['color2'] ?? '', '#F4EFE4');
+            }
+            if ($type === 'poly') {
+                $out['points'] = array_slice(array_map(
+                    fn ($p) => [max(-50, min(150, (float) ($p[0] ?? 0))), max(-50, min(150, (float) ($p[1] ?? 0)))],
+                    (array) ($el['points'] ?? [])
+                ), 0, 12);
+            }
+            if ($type === 'frame') {
+                $out['thick'] = max(0.1, min(3, (float) ($el['thick'] ?? 0.4)));
+            }
+            if ($type === 'image') {
+                $out['round'] = !empty($el['round']);
+            }
+            if ($type === 'text') {
+                $out['text']     = mb_substr(trim((string) ($el['text'] ?? '')), 0, 400);
+                $out['font']     = isset(self::FONTS[$el['font'] ?? '']) ? (string) $el['font'] : 'instrument-serif';
+                $out['size']     = max(1.0, min(15, (float) ($el['size'] ?? 5.5)));
+                $out['weight']   = (int) ($el['weight'] ?? 400) >= 600 ? 700 : 400;
+                $out['italic']   = !empty($el['italic']);
+                $out['align']    = in_array($el['align'] ?? '', ['left', 'center', 'right'], true) ? $el['align'] : 'left';
+                $out['lh']       = max(0.9, min(2, (float) ($el['lh'] ?? 1.18)));
+                $out['maxLines'] = max(0, min(8, (int) ($el['maxLines'] ?? 0)));
+            }
+            $clean[] = $out;
         }
-        self::drawMotif($im, $motif, $x + $w / 2, $y + $h / 2, min($w, $h) * 0.42, $shape, $shape2 ?? $bg);
+        return $clean;
     }
 
-    /** Dessine un motif flat (icône vectorielle géométrique). */
+    // ── Primitives graphiques ──────────────────────────────────────────────
+
     private static function drawMotif(\GdImage $im, string $type, float $cx, float $cy, float $r, int $col, int $col2): void
     {
         $cx = (int) $cx; $cy = (int) $cy; $r = (int) $r;
@@ -322,7 +604,7 @@ final class CoverStudio
             case 'soleil':
                 for ($a = 0; $a < 360; $a += 30) {
                     $rad = deg2rad($a);
-                    self::thickLine($im, $cx + cos($rad) * $r * 1.25, $cy + sin($rad) * $r * 1.25, $cx + cos($rad) * $r * 1.6, $cy + sin($rad) * $r * 1.6, 14, $col);
+                    self::thickLine($im, $cx + cos($rad) * $r * 1.25, $cy + sin($rad) * $r * 1.25, $cx + cos($rad) * $r * 1.6, $cy + sin($rad) * $r * 1.6, max(6, (int) ($r / 14)), $col);
                 }
                 imagefilledellipse($im, $cx, $cy, $r * 2, $r * 2, $col);
                 imagefilledellipse($im, $cx, $cy, (int) ($r * 1.1), (int) ($r * 1.1), $col2);
@@ -355,10 +637,8 @@ final class CoverStudio
                 }
                 break;
             case 'feuille':
-                imagefilledarc($im, $cx, $cy, $r * 2, $r * 2, 270, 90, $col, IMG_ARC_PIE);
-                imagefilledarc($im, $cx, $cy, $r * 2, $r * 2, 90, 270, $col, IMG_ARC_PIE);
                 imagefilledellipse($im, $cx, $cy, (int) ($r * 2), (int) ($r * 0.9), $col);
-                self::thickLine($im, $cx - $r, $cy, $cx + $r, $cy, 10, $col2);
+                self::thickLine($im, $cx - $r, $cy, $cx + $r, $cy, max(5, (int) ($r / 16)), $col2);
                 break;
             case 'etoile':
                 $pts = [];
@@ -379,79 +659,44 @@ final class CoverStudio
         }
     }
 
-    // ── Utilitaires GD ─────────────────────────────────────────────────────
-
     private static function drawCover(\GdImage $dst, \GdImage $src, int $x, int $y, int $w, int $h, bool $circle): void
     {
         $sw = imagesx($src);
         $sh = imagesy($src);
         $scale = max($w / $sw, $h / $sh);
-        $nw = (int) ($sw * $scale);
-        $nh = (int) ($sh * $scale);
         $tmp = imagecreatetruecolor($w, $h);
         imagecopyresampled($tmp, $src, 0, 0, (int) (($sw - $w / $scale) / 2), (int) (($sh - $h / $scale) / 2), $w, $h, (int) ($w / $scale), (int) ($h / $scale));
         if ($circle) {
-            $mask = imagecreatetruecolor($w, $h);
-            $trans = imagecolorallocatealpha($mask, 0, 0, 0, 127);
-            imagefill($mask, 0, 0, $trans);
-            imagesavealpha($mask, true);
-            $opaque = imagecolorallocate($mask, 255, 255, 255);
-            imagefilledellipse($mask, (int) ($w / 2), (int) ($h / 2), $w, $h, $opaque);
+            imagealphablending($tmp, false);
+            imagesavealpha($tmp, true);
+            $trans = imagecolorallocatealpha($tmp, 0, 0, 0, 127);
+            $cx = $w / 2;
+            $cy = $h / 2;
+            $rx = $w / 2;
+            $ry = $h / 2;
             for ($iy = 0; $iy < $h; $iy++) {
                 for ($ix = 0; $ix < $w; $ix++) {
-                    if (((int) imagecolorat($mask, $ix, $iy) & 0xFF000000) >> 24 > 100) {
-                        imagesetpixel($tmp, $ix, $iy, imagecolorallocatealpha($tmp, 0, 0, 0, 127));
+                    $dx = ($ix - $cx) / $rx;
+                    $dy = ($iy - $cy) / $ry;
+                    if ($dx * $dx + $dy * $dy > 1) {
+                        imagesetpixel($tmp, $ix, $iy, $trans);
                     }
                 }
             }
-            imagedestroy($mask);
+            imagealphablending($dst, true);
         }
         imagecopy($dst, $tmp, $x, $y, 0, 0, $w, $h);
         imagedestroy($tmp);
     }
 
-    private static function textBlock(\GdImage $im, string $font, string $text, int $x, int $y, int $maxW, int $size, int $lineH, int $color, string $align, int $maxLines): void
-    {
-        if ($text === '') {
-            return;
-        }
-        // Auto-ajuste la taille pour tenir en <= maxLines
-        $lines = self::wrap($font, $text, $size, $maxW);
-        while (count($lines) > $maxLines && $size > 34) {
-            $size -= 6;
-            $lineH = (int) ($lineH * 0.94);
-            $lines = self::wrap($font, $text, $size, $maxW);
-        }
-        $lines = array_slice($lines, 0, $maxLines);
-        foreach ($lines as $i => $line) {
-            $lw = self::width($font, $line, $size);
-            $lx = $align === 'center' ? $x + (int) (($maxW - $lw) / 2) : $x;
-            imagettftext($im, $size, 0, $lx, $y + $i * $lineH, $color, self::font($font), $line);
-        }
-    }
-
-    private static function line(\GdImage $im, string $font, string $text, int $size, int $x, int $y, int $color, float $tracking, ?int $centerIn = null): void
-    {
-        if ($text === '') {
-            return;
-        }
-        // Interlettrage manuel (GD ne gère pas letter-spacing)
-        $spaced = $tracking > 3 ? implode('', array_map(fn ($c) => $c . ' ', mb_str_split($text))) : $text;
-        if ($centerIn !== null) {
-            $w = self::width($font, $spaced, $size);
-            $x = (int) (($centerIn - $w) / 2);
-        }
-        imagettftext($im, $size, 0, $x, $y, $color, self::font($font), $spaced);
-    }
-
-    private static function wrap(string $font, string $text, int $size, int $maxW): array
+    private static function wrapPath(string $fontPath, string $text, int $size, int $maxW): array
     {
         $words = preg_split('/\s+/u', trim($text)) ?: [];
         $lines = [];
         $cur = '';
         foreach ($words as $w) {
             $try = $cur === '' ? $w : $cur . ' ' . $w;
-            if (self::width($font, $try, $size) > $maxW && $cur !== '') {
+            if (self::widthPath($fontPath, $try, $size) > $maxW && $cur !== '') {
                 $lines[] = $cur;
                 $cur = $w;
             } else {
@@ -464,9 +709,9 @@ final class CoverStudio
         return $lines;
     }
 
-    private static function width(string $font, string $text, int $size): int
+    private static function widthPath(string $fontPath, string $text, int $size): int
     {
-        $box = imagettfbbox($size, 0, self::font($font), $text);
+        $box = imagettfbbox($size, 0, $fontPath, $text);
         return abs($box[2] - $box[0]);
     }
 
@@ -477,39 +722,20 @@ final class CoverStudio
         imagesetthickness($im, 1);
     }
 
-    private static function rectBorder(\GdImage $im, int $x1, int $y1, int $x2, int $y2, int $thick, int $color): void
-    {
-        imagesetthickness($im, $thick);
-        imagerectangle($im, $x1, $y1, $x2, $y2, $color);
-        imagesetthickness($im, 1);
-    }
-
     private static function alloc(\GdImage $im, string $hex): int
-    {
-        [$r, $g, $b] = self::rgb($hex);
-        return imagecolorallocate($im, $r, $g, $b);
-    }
-
-    private static function mix(\GdImage $im, int $color, float $alpha): int
-    {
-        $r = ($color >> 16) & 0xFF;
-        $g = ($color >> 8) & 0xFF;
-        $b = $color & 0xFF;
-        return imagecolorallocatealpha($im, $r, $g, $b, (int) ((1 - $alpha) * 127));
-    }
-
-    private static function rgb(string $hex): array
     {
         $hex = ltrim($hex, '#');
         if (strlen($hex) === 3) {
             $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
         }
-        return [hexdec(substr($hex, 0, 2)), hexdec(substr($hex, 2, 2)), hexdec(substr($hex, 4, 2))];
+        return imagecolorallocate($im, (int) hexdec(substr($hex, 0, 2)), (int) hexdec(substr($hex, 2, 2)), (int) hexdec(substr($hex, 4, 2)));
     }
 
-    private static function font(string $file): string
+    /** Chemin TTF d'une police (italique si demandé et disponible). */
+    public static function fontFile(string $slug, bool $italic = false): string
     {
-        // imagettftext accepte le chemin complet ; on renvoie l'absolu
-        return str_contains($file, '/') ? $file : APP_ROOT . '/app/fonts/' . $file;
+        $def = self::FONTS[$slug] ?? self::FONTS['instrument-serif'];
+        $file = $italic && $def[2] !== null ? $def[2] : $def[1];
+        return APP_ROOT . '/app/fonts/' . $file;
     }
 }

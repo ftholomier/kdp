@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c8';
+  const BUILD = '2026-08-10 · c9';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -146,7 +146,7 @@
   }
 
   function afterRender() {
-    if (S.step === 4) injectCoverPreviews();
+    if (S.step === 4 && S.editorEls) Editor.init();
     const log = document.getElementById('console-log');
     if (log) log.scrollTop = log.scrollHeight;
   }
@@ -646,9 +646,9 @@
           </div>
 
           <div style="display:grid; gap:12px; margin-top:20px;">
-            <label>Titre<input type="text" value="${esc(cover.texts.title)}" oninput="App.setCoverText('title', this.value)"></label>
-            <label>Sous-titre<input type="text" value="${esc(cover.texts.subtitle)}" oninput="App.setCoverText('subtitle', this.value)"></label>
-            <label>Accroche (1ère de couv)<input type="text" value="${esc(cover.texts.tagline)}" oninput="App.setCoverText('tagline', this.value)"></label>
+            <label>Titre<input type="text" data-covertext="title" value="${esc(cover.texts.title)}" oninput="App.setCoverText('title', this.value)"></label>
+            <label>Sous-titre<input type="text" data-covertext="subtitle" value="${esc(cover.texts.subtitle)}" oninput="App.setCoverText('subtitle', this.value)"></label>
+            <label>Accroche (1ère de couv)<input type="text" data-covertext="tagline" value="${esc(cover.texts.tagline)}" oninput="App.setCoverText('tagline', this.value)"></label>
             <label>Auteur<input type="text" value="${esc(cover.texts.author)}" oninput="App.setCoverText('author', this.value)"></label>
             <label>Texte de 4ème de couverture<textarea rows="6" oninput="App.setCoverText('back_text', this.value)">${esc(cover.texts.back_text)}</textarea></label>
             <label>Bio auteur<textarea rows="2" oninput="App.setCoverText('bio', this.value)">${esc(cover.texts.bio)}</textarea></label>
@@ -663,19 +663,20 @@
         </div>
 
         <div>
-          <div class="cover-preview-zone">
-            <div>
-              <div class="cover-face" style="width:min(340px, 80vw);">
-                <img id="cover-front-img" src="api.php?r=coverstudio/front&id=${S.project.id}&t=${S.coverStamp || 0}" alt="1ère de couverture" style="width:100%; display:block; border-radius:2px;">
-              </div>
-              <div class="cover-face-label">1ère de couverture · rendu haute résolution</div>
+          <div class="card" style="padding:14px;">
+            <div id="ed-toolbar" class="editor-toolbar"></div>
+            <div class="editor-wrap"><div id="ed-stage"></div></div>
+            <div class="editor-downloads">
+              <button class="btn btn-ghost" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&t=' + Date.now(), '_blank')">Aperçu HD ↗</button>
+              <button class="btn btn-soft" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&download=1', '_blank')">JPG eBook (1600×2560)</button>
+              <button class="btn btn-primary" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 PDF broché complet (KDP)</button>
             </div>
-            <div>
-              <div class="cover-face" id="cover-back" style="width:min(340px, 80vw);"></div>
-              <div class="cover-face-label">4ème de couverture · zone code-barres réservée</div>
-            </div>
+            <div class="faint" style="font-size:11px; margin-top:8px;">Le PDF broché contient 4ème + tranche + 1ère en une seule page 300 dpi, fond perdu et zone code-barres compris — téléversable tel quel sur KDP. La tranche est calculée d'après la pagination réelle${S.coverGeometry ? ' (' + String(S.coverGeometry.spine_mm).replace('.', ',') + ' mm actuellement)' : ''}.</div>
           </div>
-          <div class="preview-caption">La couverture complète (4ème + dos + 1ère, fond perdu compris) s'exporte à l'étape 07.</div>
+          <div style="display:flex; gap:14px; margin-top:14px; align-items:flex-start;">
+            <img id="cover-back-img" src="api.php?r=coverstudio/back&id=${S.project.id}&t=${S.coverStamp || 0}" alt="4ème de couverture" style="width:130px; border-radius:3px; box-shadow:0 6px 18px rgba(48,40,26,.2);">
+            <div class="faint" style="font-size:11.5px; line-height:1.5; padding-top:4px;">4ème de couverture — générée automatiquement (accroche, texte de vente, bio, zone code-barres). Modifiez ses textes dans le panneau de gauche.</div>
+          </div>
         </div>
       </div>`}
     </div>`;
@@ -685,7 +686,10 @@
     try {
       const data = await Api.get('covers/get', { id: S.project.id });
       S.cover = data.cover;
-      S.coverTemplates = data.templates;
+      S.editorEls = data.els;
+      S.coverFonts = data.fonts;
+      S.coverMotifs = data.motifs;
+      S.coverGeometry = data.geometry;
       S.coverHasIllustration = data.has_illustration;
       S.coverHasRef = data.has_reference;
       S.coverDefaultPrompt = data.default_prompt;
@@ -706,22 +710,12 @@
 
   function refreshFrontPreview() {
     S.coverStamp = Date.now();
-    const img = document.getElementById('cover-front-img');
-    if (img) img.src = 'api.php?r=coverstudio/front&id=' + S.project.id + '&t=' + S.coverStamp;
   }
 
-  async function injectCoverPreviews() {
-    if (S.step !== 4 || !S.cover) return;
-    // 4ème de couverture : gabarit SVG rendu avec la palette courante
-    const host = document.getElementById('cover-back');
-    if (!host) return;
-    try {
-      const response = await fetch('api.php?r=covers/render&id=' + S.project.id + '&face=back&t=' + Date.now(), { credentials: 'same-origin' });
-      const svg = await response.text();
-      host.innerHTML = svg;
-      const el = host.querySelector('svg');
-      if (el) { el.removeAttribute('width'); el.removeAttribute('height'); el.style.width = '100%'; }
-    } catch (_) { /* aperçu indisponible */ }
+  function injectCoverPreviews() {
+    if (S.step !== 4) return;
+    const img = document.getElementById('cover-back-img');
+    if (img) img.src = 'api.php?r=coverstudio/back&id=' + S.project.id + '&t=' + Date.now();
   }
 
   function saveCover() {
@@ -731,7 +725,7 @@
           id: S.project.id, template: S.cover.template,
           palette: S.cover.palette, texts: S.cover.texts
         });
-        refreshFrontPreview();
+        Editor.syncTexts(S.cover.texts); // répercute titre/accroche dans l'éditeur
         injectCoverPreviews();
       } catch (e) { toast(e.message, true); }
     }, 700);
@@ -1041,7 +1035,7 @@
           <div class="btns">
             <button class="btn btn-light" onclick="window.open('print.php?id=${S.project.id}&auto=1', '_blank')">Imprimer l'intérieur (PDF qualité studio)</button>
             <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/pdf&id=${S.project.id}', '_blank')">PDF automatique (serveur)</button>
-            <button class="btn btn-outline-light" onclick="window.open('cover.php?id=${S.project.id}', '_blank')">Couverture complète · dos ${esc(L.spine_label)}</button>
+            <button class="btn btn-light" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 Couverture broché PDF (KDP) · dos ${esc(L.spine_label)}</button>
             <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/docx&id=${S.project.id}', '_blank')">Manuscrit .docx (Kindle eBook)</button>
             <button class="btn btn-light" style="background:var(--accent); color:#FFF6EA;" onclick="App.openPublishModal()">🚀 Publier sur Amazon KDP</button>
           </div>
@@ -1058,6 +1052,402 @@
       render();
     } catch (e) { toast(e.message, true); }
   }
+
+  // ── Éditeur visuel de couverture (éléments, alignements, polices) ───────
+
+  const Editor = (() => {
+    let stage = null, sel = null, guideV = null, guideH = null, saveTimer = null, keysBound = false;
+
+    const fontCss = slug => ((S.coverFonts || []).find(f => f.slug === slug) || {}).css || 'serif';
+    const fontHasItalic = slug => !!(((S.coverFonts || []).find(f => f.slug === slug) || {}).has_italic);
+    const findEl = id => (S.editorEls || []).find(e => e.id === id);
+
+    function init() {
+      stage = document.getElementById('ed-stage');
+      if (!stage || !S.editorEls) return;
+      stage.innerHTML = '';
+      guideV = null; guideH = null;
+      const keepSel = sel && findEl(sel.id) ? sel.id : null;
+      sel = null;
+      S.editorEls.forEach(el => stage.appendChild(buildNode(el)));
+      stage.onpointerdown = e => { if (e.target === stage) select(null); };
+      if (!keysBound) { document.addEventListener('keydown', onKeys); keysBound = true; }
+      if (keepSel) select(findEl(keepSel));
+      toolbar();
+    }
+
+    function buildNode(el) {
+      let node;
+      if (el.type === 'text') {
+        node = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'ed-text-inner';
+        inner.textContent = el.text || '';
+        node.appendChild(inner);
+      } else if (el.type === 'motif') {
+        node = document.createElement('img');
+        node.src = 'api.php?r=coverstudio/motif&type=' + encodeURIComponent(el.motif || 'blob')
+          + '&c1=' + encodeURIComponent(el.color || '#C4571F') + '&c2=' + encodeURIComponent(el.color2 || '#F4EFE4');
+        node.style.objectFit = 'contain';
+      } else if (el.type === 'image') {
+        node = document.createElement('img');
+        node.src = 'api.php?r=coverstudio/illus-file&id=' + S.project.id + '&t=' + (S.coverStamp || 0);
+        node.style.objectFit = 'cover';
+        if (el.round) node.style.borderRadius = '50%';
+      } else {
+        node = document.createElement('div');
+      }
+      node.classList.add('ed-el', 'draggable');
+      node.dataset.id = el.id;
+      applyStyle(node, el);
+      node.onpointerdown = ev => startDrag(ev, el, node);
+      if (el.type === 'text') node.ondblclick = () => startTextEdit(node, el);
+      return node;
+    }
+
+    function applyStyle(node, el) {
+      if (el.type === 'poly') {
+        node.style.left = '0'; node.style.top = '0'; node.style.width = '100%'; node.style.height = '100%';
+        node.style.background = el.color;
+        node.style.clipPath = 'polygon(' + (el.points || []).map(p => p[0] + '% ' + p[1] + '%').join(',') + ')';
+        return;
+      }
+      node.style.left = el.x + '%';
+      node.style.top = el.y + '%';
+      node.style.width = el.w + '%';
+      if (el.type === 'text') {
+        node.style.height = 'auto';
+        node.style.fontFamily = fontCss(el.font);
+        node.style.fontSize = (el.size * stage.clientWidth / 100) + 'px';
+        node.style.fontWeight = el.weight >= 600 ? 700 : 400;
+        node.style.fontStyle = el.italic ? 'italic' : 'normal';
+        node.style.textAlign = el.align || 'left';
+        node.style.color = el.color;
+        node.style.lineHeight = String(el.lh || 1.18);
+      } else {
+        node.style.height = el.h + '%';
+        if (el.type === 'rect') node.style.background = el.color;
+        if (el.type === 'ellipse') { node.style.background = el.color; node.style.borderRadius = '50%'; }
+        if (el.type === 'frame') {
+          node.style.background = 'transparent';
+          node.style.border = Math.max(2, el.thick * stage.clientWidth / 100) + 'px solid ' + el.color;
+        }
+      }
+    }
+
+    // ── Sélection, poignées, barre d'outils ──
+    function select(el) {
+      sel = el;
+      stage.querySelectorAll('.ed-el').forEach(n => n.classList.toggle('selected', !!el && n.dataset.id === el.id));
+      stage.querySelectorAll('.ed-handle').forEach(h => h.remove());
+      if (el && el.type !== 'poly') addHandles(el);
+      toolbar();
+    }
+
+    function addHandles(el) {
+      const node = stage.querySelector('.ed-el[data-id="' + el.id + '"]');
+      if (!node) return;
+      const mk = (cls) => {
+        const h = document.createElement('div');
+        h.className = 'ed-handle ' + cls;
+        h.onpointerdown = ev => startResize(ev, el, node, cls);
+        stage.appendChild(h);
+        placeHandle(h, node, cls);
+        return h;
+      };
+      mk('e');
+      if (el.type !== 'text') { mk('s'); mk('se'); }
+    }
+
+    function placeHandle(h, node, cls) {
+      const x = node.offsetLeft, y = node.offsetTop, w = node.offsetWidth, hh = node.offsetHeight;
+      if (cls === 'e') { h.style.left = (x + w - 5) + 'px'; h.style.top = (y + hh / 2 - 5) + 'px'; }
+      if (cls === 's') { h.style.left = (x + w / 2 - 5) + 'px'; h.style.top = (y + hh - 5) + 'px'; }
+      if (cls === 'se') { h.style.left = (x + w - 5) + 'px'; h.style.top = (y + hh - 5) + 'px'; }
+    }
+
+    function refreshHandles(el) {
+      const node = stage.querySelector('.ed-el[data-id="' + el.id + '"]');
+      stage.querySelectorAll('.ed-handle').forEach(h => {
+        placeHandle(h, node, h.classList.contains('se') ? 'se' : h.classList.contains('s') ? 's' : 'e');
+      });
+    }
+
+    // ── Glisser-déposer avec traits d'alignement magnétiques ──
+    function startDrag(ev, el, node) {
+      if (node.dataset.editing === '1') return;
+      ev.preventDefault();
+      select(el);
+      if (el.type === 'poly') return; // formes de fond : couleur éditable, position fixe
+      const sx = ev.clientX, sy = ev.clientY, ox = el.x, oy = el.y;
+      node.classList.add('dragging');
+      node.setPointerCapture(ev.pointerId);
+      node.onpointermove = e => {
+        let nx = ox + (e.clientX - sx) * 100 / stage.clientWidth;
+        let ny = oy + (e.clientY - sy) * 100 / stage.clientHeight;
+        const hPct = node.offsetHeight * 100 / stage.clientHeight;
+        [nx, ny] = snap(el, nx, ny, el.w, hPct);
+        el.x = Math.round(nx * 10) / 10;
+        el.y = Math.round(ny * 10) / 10;
+        applyStyle(node, el);
+        refreshHandles(el);
+      };
+      node.onpointerup = e => {
+        node.classList.remove('dragging');
+        node.releasePointerCapture(e.pointerId);
+        node.onpointermove = null; node.onpointerup = null;
+        hideGuides();
+        save();
+      };
+    }
+
+    function snap(el, nx, ny, w, h) {
+      const T = 1.1; // seuil magnétique en %
+      const xs = [{ v: 50 - w / 2, g: 50 }, { v: 8, g: 8 }, { v: 92 - w, g: 92 }];
+      const ys = [{ v: 50 - h / 2, g: 50 }];
+      (S.editorEls || []).forEach(other => {
+        if (other.id === el.id || other.type === 'poly') return;
+        const oh = other.type === 'text'
+          ? (stage.querySelector('.ed-el[data-id="' + other.id + '"]') || { offsetHeight: 0 }).offsetHeight * 100 / stage.clientHeight
+          : other.h;
+        [other.x, other.x + other.w / 2 - w / 2, other.x + other.w - w].forEach((v, i) =>
+          xs.push({ v, g: i === 1 ? other.x + other.w / 2 : (i === 0 ? other.x : other.x + other.w) }));
+        [other.y, other.y + oh / 2 - h / 2, other.y + oh - h].forEach((v, i) =>
+          ys.push({ v, g: i === 1 ? other.y + oh / 2 : (i === 0 ? other.y : other.y + oh) }));
+      });
+      let gx = null, gy = null;
+      for (const c of xs) if (Math.abs(nx - c.v) < T) { nx = c.v; gx = c.g; break; }
+      for (const c of ys) if (Math.abs(ny - c.v) < T) { ny = c.v; gy = c.g; break; }
+      showGuides(gx, gy);
+      return [nx, ny];
+    }
+
+    function showGuides(gx, gy) {
+      if (gx !== null) {
+        if (!guideV) { guideV = document.createElement('div'); guideV.className = 'ed-guide v'; stage.appendChild(guideV); }
+        guideV.style.left = gx + '%'; guideV.style.display = 'block';
+      } else if (guideV) guideV.style.display = 'none';
+      if (gy !== null) {
+        if (!guideH) { guideH = document.createElement('div'); guideH.className = 'ed-guide h'; stage.appendChild(guideH); }
+        guideH.style.top = gy + '%'; guideH.style.display = 'block';
+      } else if (guideH) guideH.style.display = 'none';
+    }
+
+    function hideGuides() {
+      if (guideV) guideV.style.display = 'none';
+      if (guideH) guideH.style.display = 'none';
+    }
+
+    function startResize(ev, el, node, mode) {
+      ev.preventDefault(); ev.stopPropagation();
+      const sx = ev.clientX, sy = ev.clientY, ow = el.w, oh = el.h || 10;
+      const h = ev.target;
+      h.setPointerCapture(ev.pointerId);
+      h.onpointermove = e => {
+        if (mode === 'e' || mode === 'se') el.w = Math.max(4, Math.round((ow + (e.clientX - sx) * 100 / stage.clientWidth) * 10) / 10);
+        if ((mode === 's' || mode === 'se') && el.type !== 'text') el.h = Math.max(1, Math.round((oh + (e.clientY - sy) * 100 / stage.clientHeight) * 10) / 10);
+        applyStyle(node, el);
+        refreshHandles(el);
+      };
+      h.onpointerup = e => {
+        h.releasePointerCapture(e.pointerId);
+        h.onpointermove = null; h.onpointerup = null;
+        save();
+      };
+    }
+
+    // ── Édition de texte en place ──
+    function startTextEdit(node, el) {
+      const inner = node.querySelector('.ed-text-inner');
+      node.dataset.editing = '1';
+      inner.contentEditable = 'true';
+      inner.focus();
+      document.getSelection().selectAllChildren(inner);
+      inner.onblur = () => {
+        inner.contentEditable = 'false';
+        node.dataset.editing = '0';
+        el.text = inner.textContent.trim();
+        if (['title', 'tagline', 'subtitle'].includes(el.id) && S.cover) {
+          S.cover.texts[el.id] = el.text; // miroir vers les champs du panneau
+          const field = document.querySelector('[data-covertext="' + el.id + '"]');
+          if (field) field.value = el.text;
+        }
+        save();
+      };
+    }
+
+    function onKeys(e) {
+      if (S.step !== 4 || !sel || !stage) return;
+      if (document.activeElement && (document.activeElement.isContentEditable
+          || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName))) return;
+      const step = e.shiftKey ? 2 : 0.4;
+      let used = true;
+      if (e.key === 'ArrowLeft') sel.x -= step;
+      else if (e.key === 'ArrowRight') sel.x += step;
+      else if (e.key === 'ArrowUp') sel.y -= step;
+      else if (e.key === 'ArrowDown') sel.y += step;
+      else if (e.key === 'Delete' || e.key === 'Backspace') { removeSelected(); return; }
+      else if (e.key === 'Escape') { select(null); return; }
+      else used = false;
+      if (used) {
+        e.preventDefault();
+        const node = stage.querySelector('.ed-el[data-id="' + sel.id + '"]');
+        applyStyle(node, sel);
+        refreshHandles(sel);
+        save();
+      }
+    }
+
+    function removeSelected() {
+      if (!sel || sel.id === 'fond') { toast('Le fond ne peut pas être supprimé.', true); return; }
+      S.editorEls = S.editorEls.filter(e => e.id !== sel.id);
+      sel = null;
+      init();
+      save();
+    }
+
+    function reorder(delta) {
+      if (!sel) return;
+      const i = S.editorEls.findIndex(e => e.id === sel.id);
+      const j = i + delta;
+      if (i < 0 || j < 1 || j >= S.editorEls.length) return; // le fond reste dessous
+      [S.editorEls[i], S.editorEls[j]] = [S.editorEls[j], S.editorEls[i]];
+      const keep = sel;
+      init();
+      select(findEl(keep.id));
+      save();
+    }
+
+    // ── Barre d'outils contextuelle ──
+    function toolbar() {
+      const bar = document.getElementById('ed-toolbar');
+      if (!bar) return;
+      bar.innerHTML = '';
+      const add = html => { bar.insertAdjacentHTML('beforeend', html); return bar.lastElementChild; };
+
+      const btnText = add('<div class="tb-btn" title="Ajouter un texte">＋ Texte</div>');
+      btnText.onclick = () => {
+        const el = { id: 'txt' + Date.now() % 100000, type: 'text', text: 'Votre texte', x: 10, y: 40, w: 80,
+          font: 'instrument-serif', size: 3.5, weight: 400, italic: false, align: 'left',
+          color: '#1A1A17', lh: 1.2, maxLines: 0 };
+        S.editorEls.push(el);
+        init();
+        select(findEl(el.id));
+        save();
+      };
+
+      if (!sel) {
+        add('<span class="tb-hint">Cliquez un élément pour l\'éditer · glissez pour déplacer (traits d\'alignement) · double-clic = modifier le texte · flèches = déplacement fin</span>');
+        return;
+      }
+      add('<div class="tb-sep"></div>');
+
+      if (sel.type === 'text') {
+        // Police avec aperçu
+        const fontSel = add('<select title="Police"></select>');
+        (S.coverFonts || []).forEach(f => {
+          const o = document.createElement('option');
+          o.value = f.slug;
+          o.textContent = f.label;
+          o.style.fontFamily = f.css;
+          o.style.fontSize = '15px';
+          if (f.slug === sel.font) o.selected = true;
+          fontSel.appendChild(o);
+        });
+        const fontPrev = add('<span class="font-preview" style="font-family:' + fontCss(sel.font) + ';">AaBb</span>');
+        fontSel.onchange = () => { sel.font = fontSel.value; fontPrev.style.fontFamily = fontCss(sel.font);
+          if (!fontHasItalic(sel.font)) sel.italic = false; applySel(); toolbar(); };
+
+        const size = add('<input type="number" min="1" max="15" step="0.2" value="' + sel.size + '" title="Taille (% de la largeur)">');
+        size.onchange = () => { sel.size = Math.max(1, Math.min(15, parseFloat(size.value) || 3)); applySel(); };
+
+        const b = add('<div class="tb-btn bold ' + (sel.weight >= 600 ? 'on' : '') + '" title="Gras">G</div>');
+        b.onclick = () => { sel.weight = sel.weight >= 600 ? 400 : 700; b.classList.toggle('on'); applySel(); };
+        const i = add('<div class="tb-btn italic ' + (sel.italic ? 'on' : '') + '" title="Italique"' + (fontHasItalic(sel.font) ? '' : ' style="opacity:.35;pointer-events:none;"') + '>I</div>');
+        i.onclick = () => { sel.italic = !sel.italic; i.classList.toggle('on'); applySel(); };
+
+        ['left', 'center', 'right'].forEach(a => {
+          const btn = add('<div class="tb-btn ' + (sel.align === a ? 'on' : '') + '" title="Aligner">' + (a === 'left' ? '⇤' : a === 'center' ? '↔' : '⇥') + '</div>');
+          btn.onclick = () => { sel.align = a; applySel(); toolbar(); };
+        });
+
+        const col = add('<input type="color" value="' + toHex6(sel.color) + '" title="Couleur du texte">');
+        col.oninput = () => { sel.color = col.value; applySel(); };
+
+      } else if (sel.type === 'motif') {
+        const mSel = add('<select title="Motif"></select>');
+        (S.coverMotifs || []).forEach(m => {
+          const o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          if (m === sel.motif) o.selected = true;
+          mSel.appendChild(o);
+        });
+        mSel.onchange = () => { sel.motif = mSel.value; rebuildSel(); };
+        const c1 = add('<input type="color" value="' + toHex6(sel.color) + '" title="Couleur 1">');
+        c1.oninput = () => { sel.color = c1.value; rebuildSel(); };
+        const c2 = add('<input type="color" value="' + toHex6(sel.color2 || '#F4EFE4') + '" title="Couleur 2">');
+        c2.oninput = () => { sel.color2 = c2.value; rebuildSel(); };
+
+      } else if (sel.type === 'image') {
+        add('<span class="tb-hint">Illustration IA — glissez/redimensionnez librement</span>');
+        const round = add('<div class="tb-btn ' + (sel.round ? 'on' : '') + '" title="Rogner en cercle">◯</div>');
+        round.onclick = () => { sel.round = !sel.round; round.classList.toggle('on'); rebuildSel(); };
+
+      } else {
+        const col = add('<input type="color" value="' + toHex6(sel.color) + '" title="Couleur">');
+        col.oninput = () => { sel.color = col.value; applySel(); };
+      }
+
+      add('<div class="tb-sep"></div>');
+      const up = add('<div class="tb-btn" title="Passer au premier plan">⬆</div>');
+      up.onclick = () => reorder(1);
+      const down = add('<div class="tb-btn" title="Passer à l\'arrière-plan">⬇</div>');
+      down.onclick = () => reorder(-1);
+      if (sel.id !== 'fond') {
+        const del = add('<div class="tb-btn" title="Supprimer" style="color:var(--accent);">🗑</div>');
+        del.onclick = removeSelected;
+      }
+    }
+
+    function applySel() {
+      const node = stage.querySelector('.ed-el[data-id="' + sel.id + '"]');
+      applyStyle(node, sel);
+      refreshHandles(sel);
+      save();
+    }
+
+    function rebuildSel() {
+      const keep = sel;
+      init();
+      select(findEl(keep.id));
+      save();
+    }
+
+    function toHex6(c) {
+      c = String(c || '#000000');
+      return /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#1B2A4A';
+    }
+
+    function save() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        Api.post('coverstudio/layout-save', { id: S.project.id, els: S.editorEls })
+          .catch(e => toast(e.message, true));
+      }, 600);
+    }
+
+    function syncTexts(texts) {
+      (S.editorEls || []).forEach(el => {
+        if (el.type === 'text' && ['title', 'tagline', 'subtitle'].includes(el.id) && texts[el.id] !== undefined) {
+          el.text = texts[el.id];
+          const node = stage && stage.querySelector('.ed-el[data-id="' + el.id + '"] .ed-text-inner');
+          if (node) node.textContent = el.text;
+        }
+      });
+    }
+
+    return { init, syncTexts };
+  })();
 
   // ── Barre de pied ────────────────────────────────────────────────────────
 
@@ -1469,9 +1859,9 @@
           id: S.project.id, layout: v.layout, motif: v.motif, palette: v.palette
         });
         S.cover = data.cover;
+        S.editorEls = data.cover.els; // la version choisie devient éditable
         S.coverVariants.forEach((x, i) => { x.selected = i === index; });
         render();
-        refreshFrontPreview();
         injectCoverPreviews();
       } catch (e) { toast(e.message, true); }
     },
@@ -1482,13 +1872,13 @@
       try {
         const data = await Api.post('coverstudio/illustration', { id: S.project.id, prompt });
         S.coverHasIllustration = true;
-        if (data.cover) S.cover = data.cover; // bascule auto en mise en page « affiche »
+        S.coverStamp = Date.now();
+        if (data.cover) { S.cover = data.cover; S.editorEls = data.cover.els; }
         if (S.coverVariants) S.coverVariants.forEach(v => { v.selected = false; });
-        toast('Illustration générée — affichée en pleine page sur la couverture.');
+        toast('Illustration générée — affichée en pleine page, retouchable dans l’éditeur.');
       } catch (e) { toast(e.message, true); }
       setBusy('illus', false);
       render();
-      refreshFrontPreview();
       injectCoverPreviews();
     },
 

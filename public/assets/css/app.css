@@ -463,6 +463,53 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .publish-card .btns { display: grid; gap: 8px; margin-top: 14px; }
 .publish-card .btn { width: 100%; }
 
+/* ── Éditeur de couverture ── */
+.editor-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px;
+  background: var(--paper-soft); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px;
+  min-height: 46px; font-size: 12.5px;
+}
+.editor-toolbar .tb-sep { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
+.editor-toolbar select, .editor-toolbar input[type=number] {
+  width: auto; padding: 5px 7px; font-size: 12px; border-radius: 7px;
+}
+.editor-toolbar input[type=number] { width: 62px; }
+.editor-toolbar input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); cursor: pointer; }
+.tb-btn {
+  padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper);
+  cursor: pointer; font-size: 12px; user-select: none; line-height: 1;
+}
+.tb-btn:hover { border-color: var(--navy); }
+.tb-btn.on { background: var(--navy); color: var(--navy-ink); border-color: var(--navy); }
+.tb-btn.bold { font-weight: 700; }
+.tb-btn.italic { font-style: italic; }
+.tb-hint { color: var(--fainter); font-size: 11px; }
+
+.editor-wrap { display: flex; justify-content: center; background: #E8E1D3; border-radius: 12px; padding: 18px; }
+#ed-stage {
+  position: relative; width: 400px; aspect-ratio: 1600 / 2560; background: #fff;
+  box-shadow: 0 14px 34px rgba(48,40,26,.25); overflow: hidden; touch-action: none;
+}
+#ed-stage .ed-el { position: absolute; box-sizing: border-box; }
+#ed-stage .ed-el.draggable { cursor: grab; }
+#ed-stage .ed-el.dragging { cursor: grabbing; }
+#ed-stage .ed-el.selected { outline: 1.5px solid #2743D0; outline-offset: 0; }
+#ed-stage .ed-el .ed-text-inner { width: 100%; overflow-wrap: break-word; white-space: pre-wrap; }
+#ed-stage .ed-el[data-editing="1"] { cursor: text; }
+.ed-handle {
+  position: absolute; width: 10px; height: 10px; background: #2743D0; border: 1.5px solid #fff;
+  border-radius: 2px; z-index: 30;
+}
+.ed-handle.e  { cursor: ew-resize; }
+.ed-handle.s  { cursor: ns-resize; }
+.ed-handle.se { cursor: nwse-resize; }
+.ed-guide { position: absolute; background: #FF2D8A; z-index: 25; pointer-events: none; }
+.ed-guide.v { width: 1px; top: 0; bottom: 0; }
+.ed-guide.h { height: 1px; left: 0; right: 0; }
+.editor-downloads { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.font-preview-row { display: flex; align-items: center; gap: 8px; }
+.font-preview { font-size: 17px; line-height: 1; color: var(--ink); white-space: nowrap; }
+
 /* ── Modales ── */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 50; background: rgba(26,26,23,.45);

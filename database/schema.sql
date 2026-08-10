@@ -160,11 +160,12 @@ CREATE TABLE IF NOT EXISTS images (
 
 -- Étape 4 : couverture (1ère + 4ème), gabarit flat design + contenus
 CREATE TABLE IF NOT EXISTS covers (
-    project_id INT UNSIGNED NOT NULL,
-    template   VARCHAR(100) NOT NULL DEFAULT 'editorial',
-    palette    TEXT NULL,          -- JSON : {"c1":"#1B2A4A","c2":"#C4571F","c3":"#F4EFE4","c4":"#1A1A17"}
-    texts      MEDIUMTEXT NULL,    -- JSON : title, subtitle, tagline, author, back_text, bio
-    updated_at DATETIME NOT NULL,
+    project_id  INT UNSIGNED NOT NULL,
+    template    VARCHAR(100) NOT NULL DEFAULT 'editorial',
+    palette     TEXT NULL,          -- JSON : {"c1":"#1B2A4A","c2":"#C4571F","c3":"#F4EFE4","c4":"#1A1A17"} + layout/motif
+    texts       MEDIUMTEXT NULL,    -- JSON : title, subtitle, tagline, author, back_text, bio, illus_prompt
+    layout_json MEDIUMTEXT NULL,    -- JSON : éléments de l'éditeur de couverture
+    updated_at  DATETIME NOT NULL,
     PRIMARY KEY (project_id),
     CONSTRAINT fk_covers_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

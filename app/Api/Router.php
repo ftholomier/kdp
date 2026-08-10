@@ -381,6 +381,11 @@ final class Router
                 // Le diagnostic ne lève jamais : on renvoie toujours 200 avec le détail brut.
                 Http::ok(['test' => Canopy::test()]);
 
+            case 'canopy/reset-usage':
+                Http::requirePost();
+                Canopy::resetUsage();
+                Http::ok(['canopy' => Canopy::status()]);
+
             case 'gemini/test':
                 Http::requirePost();
                 // Échec rapide : pas de relance, timeout court, budget large

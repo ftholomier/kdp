@@ -80,7 +80,7 @@ return [
         'timeout'        => 30,          // secondes par appel
         // Économie de crédits (offre gratuite ≈ 100 requêtes/mois) :
         'cache_ttl'      => 604800,      // une même recherche = 1 crédit / 7 jours
-        'monthly_budget' => 95,          // garde-fou : au-delà, mise en veille du connecteur
+        'monthly_budget' => 100,         // garde-fou local (offre gratuite = 100/mois)
         'searches_per_analysis' => 2,    // recherches Amazon max par analyse d'idée
     ],
 

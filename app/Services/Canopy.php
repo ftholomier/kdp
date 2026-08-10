@@ -194,7 +194,7 @@ final class Canopy
             return ['ok' => false, 'stage' => 'config', 'message' => 'Clé API Canopy absente : collez-la ci-dessus puis Enregistrez avant de tester.'];
         }
 
-        [$code, $response, $curlError] = self::rawPost(self::SEARCH_QUERY, [
+        [$code, $response, $curlError, $headers] = self::rawPost(self::SEARCH_QUERY, [
             'searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => 1,
         ]);
 
@@ -204,6 +204,9 @@ final class Canopy
             'domain'    => self::domain(),
             'usage'     => self::status(),
             'excerpt'   => mb_substr(preg_replace('/\s+/', ' ', (string) $response) ?? '', 0, 600),
+            // En-têtes liés au quota : servent à brancher le compteur sur le
+            // vrai chiffre de Canopy (leurs noms exacts nous sont révélés ici).
+            'quota_headers' => self::quotaHeaders($headers),
         ];
 
         if ($curlError !== '') {
@@ -248,6 +251,11 @@ final class Canopy
         $out['message'] = $results
             ? 'Connexion opérationnelle — ' . count($results) . ' résultats Amazon reçus.'
             : 'Canopy a répondu (HTTP 200) mais aucun produit n\'a été extrait : le schéma diffère peut-être. Détail brut ci-dessous.';
+        if ($out['quota_headers']) {
+            $out['message'] .= ' [quota Canopy détecté : '
+                . implode(', ', array_map(fn ($k, $v) => "$k=$v", array_keys($out['quota_headers']), $out['quota_headers']))
+                . ']';
+        }
         return $out;
     }
 
@@ -281,13 +289,14 @@ final class Canopy
 
     // ── Interne ────────────────────────────────────────────────────────────
 
-    /** POST GraphQL brut. @return array{0:int,1:string,2:string} code, corps, erreur curl */
+    /** POST GraphQL brut. @return array{0:int,1:string,2:string,3:array} code, corps, erreur curl, en-têtes */
     private static function rawPost(string $query, array $variables): array
     {
         $cfg = Config::get('canopy');
         $payload = json_encode(['query' => $query, 'variables' => $variables], JSON_UNESCAPED_UNICODE);
         $apiKey = trim((string) Settings::get('canopy.api_key', ''));
 
+        $headers = [];
         $ch = curl_init((string) ($cfg['endpoint'] ?? 'https://graphql.canopyapi.co/'));
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
@@ -302,13 +311,33 @@ final class Canopy
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT        => (int) ($cfg['timeout'] ?? 30),
             CURLOPT_SSL_VERIFYPEER => true,
+            // Capture des en-têtes : beaucoup d'API y renvoient le quota réel restant
+            CURLOPT_HEADERFUNCTION => function ($ch, string $line) use (&$headers): int {
+                $pos = strpos($line, ':');
+                if ($pos !== false) {
+                    $headers[strtolower(trim(substr($line, 0, $pos)))] = trim(substr($line, $pos + 1));
+                }
+                return strlen($line);
+            },
         ]);
         $response = curl_exec($ch);
         $curlError = $response === false ? (string) curl_error($ch) : '';
         $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 
-        return [$code, is_string($response) ? $response : '', $curlError];
+        return [$code, is_string($response) ? $response : '', $curlError, $headers];
+    }
+
+    /** Repère un éventuel en-tête de quota (nom variable selon les API). */
+    private static function quotaHeaders(array $headers): array
+    {
+        $out = [];
+        foreach ($headers as $name => $value) {
+            if (preg_match('/quota|rate.?limit|credit|usage|remaining|limit/i', $name)) {
+                $out[$name] = $value;
+            }
+        }
+        return $out;
     }
 
     /** @throws \RuntimeException en cas d'erreur HTTP ou GraphQL */

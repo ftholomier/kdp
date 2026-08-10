@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c5';
+  const BUILD = '2026-08-10 · c6';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -222,9 +222,10 @@
         <div class="card card-pad" style="min-width:220px;">
           <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--fainter);">Crédits Canopy · ${esc((canopy.domain || 'FR'))}</div>
           ${canopy.enabled ? `
-          <div class="mono" style="font-size:26px; margin-top:6px;">${remaining}<span style="font-size:14px; color:var(--faint);"> / ${canopy.budget} restants</span></div>
+          <div class="mono" style="font-size:26px; margin-top:6px;">${remaining}<span style="font-size:14px; color:var(--faint);"> / ${canopy.budget}</span></div>
           <div class="demand-track" style="margin-top:8px;"><div class="demand-fill" style="width:${Math.min(100, Math.round(canopy.used / canopy.budget * 100))}%; background:${canopy.exhausted ? 'var(--accent)' : 'var(--navy)'};"></div></div>
-          <div style="font-size:11.5px; color:var(--faint); margin-top:6px;">${canopy.used} utilisée${canopy.used > 1 ? 's' : ''} ce mois-ci${canopy.exhausted ? ' · quota atteint' : ''}</div>`
+          <div style="font-size:11.5px; color:var(--faint); margin-top:6px;">${canopy.used} comptée${canopy.used > 1 ? 's' : ''} localement${canopy.exhausted ? ' · quota atteint' : ''} · <span style="color:var(--accent); cursor:pointer;" onclick="App.resetCanopyUsage()">réinitialiser</span></div>
+          <div style="font-size:10.5px; color:var(--fainter); margin-top:4px;">Référence : votre tableau de bord canopyapi.co</div>`
           : `<div style="font-size:13px; color:var(--muted); margin-top:8px; line-height:1.5;">Connecteur non configuré.<br><span style="color:var(--accent); cursor:pointer;" onclick="App.openConnectors()">Coller ma clé Canopy ›</span></div>`}
         </div>
       </div>
@@ -1171,7 +1172,7 @@
             <div style="font-weight:600;">Canopy API <span class="faint" style="font-weight:400;">— vraies données Amazon (optionnel)</span></div>
             <span class="badge ${canopy.source ? 'badge-green' : 'badge-neutral'}">${sourceLabel(canopy.source)}</span>
           </div>
-          <div class="sub" style="margin:8px 0 0;">Version gratuite sur <a href="https://www.canopyapi.co" target="_blank" rel="noopener">canopyapi.co</a> : l'analyse de niche et les concepts s'appuient alors sur les vrais résultats Amazon (titres, prix, notes, volume d'avis). Cache 7 jours pour économiser le quota${canopy.status && canopy.status.enabled ? ` · <strong>${canopy.status.used}/${canopy.status.budget} requêtes ce mois-ci</strong>${canopy.status.exhausted ? ' — quota atteint, repli sur Gemini seul' : ''}` : ''}.</div>
+          <div class="sub" style="margin:8px 0 0;">Version gratuite sur <a href="https://www.canopyapi.co" target="_blank" rel="noopener">canopyapi.co</a> : l'analyse de niche et les concepts s'appuient alors sur les vrais résultats Amazon (titres, prix, notes, volume d'avis). Cache 7 jours pour économiser le quota${canopy.status && canopy.status.enabled ? ` · <strong>${canopy.status.used}/${canopy.status.budget} requêtes comptées localement</strong> <span style="color:var(--accent); cursor:pointer;" onclick="App.resetCanopyUsage()">réinitialiser</span> — le chiffre de référence reste celui de votre tableau de bord Canopy` : ''}.</div>
           <div class="row" style="margin-top:12px;">
             <label>Clé API ${canopy.masked ? `<span class="faint">(actuelle : ${esc(canopy.masked)})</span>` : ''}
               <input type="password" id="cn-canopy-key" placeholder="${canopy.masked ? 'inchangée' : 'Collez votre clé Canopy'}" autocomplete="off">
@@ -1694,6 +1695,18 @@
       S.busy.testGemini = false;
       S.modal = connectorsModalView(S.connectors);
       render();
+    },
+
+    async resetCanopyUsage() {
+      try {
+        const data = await Api.post('canopy/reset-usage', {});
+        if (S.app.canopy) S.app.canopy = data.canopy;
+        if (S.watchCanopy) S.watchCanopy = data.canopy;
+        if (S.connectors && S.connectors.canopy) S.connectors.canopy.status = data.canopy;
+        toast('Compteur local remis à zéro.');
+        if (S.view === 'watch') { App.openWatch(); }
+        else if (S.modal) { S.modal = connectorsModalView(S.connectors); render(); }
+      } catch (e) { toast(e.message, true); }
     },
 
     async testCanopy() {

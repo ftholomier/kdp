@@ -647,6 +647,7 @@ final class Router
 
     private static function project(int $id, int $userId): array
     {
+        \App\Services\Layout::ensureFinalPagesColumn();
         $project = Db::one('SELECT * FROM projects WHERE id = ? AND user_id = ?', [$id, $userId]);
         if (!$project) {
             Http::error('Projet introuvable.', 404);
@@ -683,6 +684,7 @@ final class Router
             'mode'        => fn ($v) => in_array($v, ['describe', 'trends'], true) ? $v : 'describe',
             'idea'        => fn ($v) => (string) $v,
             'pages'       => fn ($v) => max(60, min(400, (int) $v)),
+            'final_pages' => fn ($v) => ($v === '' || $v === null || (int) $v <= 0) ? null : max(24, min(828, (int) $v)),
             'photos'      => fn ($v) => $v ? 1 : 0,
             'photos_per'  => fn ($v) => max(1, min(6, (int) $v)),
             'photo_style' => fn ($v) => in_array($v, ['nb', 'couleur', 'schemas'], true) ? $v : 'nb',

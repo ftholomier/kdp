@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS projects (
     theme_id       INT UNSIGNED NULL,
     concept_id     INT UNSIGNED NULL,
     pages          SMALLINT UNSIGNED NOT NULL DEFAULT 180,
+    final_pages    SMALLINT UNSIGNED NULL,   -- pagination définitive (previewer KDP), NULL = estimation auto
     photos         TINYINT(1) NOT NULL DEFAULT 0,
     photos_per     TINYINT UNSIGNED NOT NULL DEFAULT 2,
     photo_style    ENUM('nb','couleur','schemas') NOT NULL DEFAULT 'nb',

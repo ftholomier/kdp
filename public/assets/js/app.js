@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c9';
+  const BUILD = '2026-08-10 · c10';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -671,7 +671,14 @@
               <button class="btn btn-soft" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&download=1', '_blank')">JPG eBook (1600×2560)</button>
               <button class="btn btn-primary" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 PDF broché complet (KDP)</button>
             </div>
-            <div class="faint" style="font-size:11px; margin-top:8px;">Le PDF broché contient 4ème + tranche + 1ère en une seule page 300 dpi, fond perdu et zone code-barres compris — téléversable tel quel sur KDP. La tranche est calculée d'après la pagination réelle${S.coverGeometry ? ' (' + String(S.coverGeometry.spine_mm).replace('.', ',') + ' mm actuellement)' : ''}.</div>
+            <div class="faint" style="font-size:11px; margin-top:8px;">Le PDF broché contient 4ème + tranche + 1ère en une seule page 300 dpi, fond perdu et zone code-barres compris — téléversable tel quel sur KDP. La tranche est calculée d'après la pagination${S.coverGeometry ? ' : ' + S.coverGeometry.pages + ' pages → dos ' + String(S.coverGeometry.spine_mm).replace('.', ',') + ' mm' : ''}.</div>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+              <label style="font-size:12px; font-weight:500; flex:none;">Pages définitives</label>
+              <input type="number" min="24" max="828" style="width:110px; padding:7px 9px; font-size:12.5px;"
+                     value="${S.project.final_pages || ''}" placeholder="auto${S.coverGeometry ? ' : ' + S.coverGeometry.pages : ''}"
+                     onchange="App.setFinalPages(this.value)">
+              <span class="faint" style="font-size:11px;">Reportez ici le nombre de pages affiché par le previewer KDP après téléversement de l'intérieur — la tranche sera exacte. Vide = estimation auto.</span>
+            </div>
           </div>
           <div style="display:flex; gap:14px; margin-top:14px; align-items:flex-start;">
             <img id="cover-back-img" src="api.php?r=coverstudio/back&id=${S.project.id}&t=${S.coverStamp || 0}" alt="4ème de couverture" style="width:130px; border-radius:3px; box-shadow:0 6px 18px rgba(48,40,26,.2);">
@@ -1020,6 +1027,12 @@
         <div class="title">Réglages d'impression</div>
         <div class="sub">Conformes aux gabarits KDP broché.</div>
         ${!L ? loadingCard('Calculs en cours…') : `
+        <div class="spec-row">
+          <span class="k">Pages définitives <span class="faint" style="font-size:10.5px;">(previewer KDP)</span></span>
+          <input type="number" min="24" max="828" style="width:92px; padding:6px 8px; font-size:12.5px; text-align:right;"
+                 value="${S.project.final_pages || ''}" placeholder="auto : ${L.geometry.pages}"
+                 onchange="App.setFinalPages(this.value)">
+        </div>
         ${L.fields.map(f => `<div class="spec-row"><span class="k">${esc(f.k)}</span><span class="v">${esc(f.v)}</span></div>`).join('')}
 
         <div class="title" style="margin-top:26px; margin-bottom:12px;">Conformité KDP</div>
@@ -1996,6 +2009,25 @@
     },
 
     next6() { S.step = 7; enterStep(); render(); window.scrollTo(0, 0); },
+
+    async setFinalPages(value) {
+      try {
+        await Api.post('projects/update', { id: S.project.id, final_pages: value });
+        S.project.final_pages = (value === '' || parseInt(value, 10) <= 0) ? null : parseInt(value, 10);
+        // Recharge la géométrie (tranche recalculée) selon l'écran courant
+        if (S.step === 7) {
+          S.layout = null;
+          await loadLayout();
+        } else if (S.step === 4) {
+          const data = await Api.get('covers/get', { id: S.project.id });
+          S.coverGeometry = data.geometry;
+          render();
+        }
+        toast(S.project.final_pages
+          ? 'Pagination forcée à ' + S.project.final_pages + ' pages — dos recalculé pour les exports.'
+          : 'Retour à l\'estimation automatique de la pagination.');
+      } catch (e) { toast(e.message, true); }
+    },
 
     // Étape 7
     async openPublishModal() {

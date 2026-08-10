@@ -44,9 +44,34 @@ final class Layout
         ];
     }
 
-    /** Pages réelles estimées à partir des mots effectivement écrits. */
+    /** Colonne final_pages (pagination forcée) : migration automatique. */
+    public static function ensureFinalPagesColumn(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+        try {
+            Db::one('SELECT final_pages FROM projects LIMIT 1');
+        } catch (\PDOException $e) {
+            try {
+                Db::pdo()->exec('ALTER TABLE projects ADD COLUMN final_pages SMALLINT UNSIGNED NULL AFTER pages');
+            } catch (\Throwable $inner) {
+                // concurrence : une autre requête a pu l'ajouter
+            }
+        }
+    }
+
+    /**
+     * Pages réelles : le chiffre DÉFINITIF saisi par l'auteur (celui du
+     * previewer KDP) s'il existe, sinon l'estimation sur les mots écrits.
+     */
     public static function realPages(array $project): int
     {
+        if (!empty($project['final_pages'])) {
+            return max(24, min(828, (int) $project['final_pages']));
+        }
         $row = Db::one(
             "SELECT COALESCE(SUM(s.words),0) AS w, COUNT(DISTINCT c.id) AS chapters
              FROM chapters c LEFT JOIN sections s ON s.chapter_id = c.id AND s.status = 'done'

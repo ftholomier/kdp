@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c6';
+  const BUILD = '2026-08-10 · c7';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -606,21 +606,38 @@
     <div class="page">
       <div class="page-head" style="max-width:680px;">
         <div class="kicker">Étape 04 — Couverture</div>
-        <h1>1ère et 4ème de couverture,<br>fidèles à vos gabarits.</h1>
-        <p class="lead">Choisissez un modèle flat design, ajustez textes et palette : le gabarit est respecté au trait près. Vos propres modèles déposés dans <span class="mono" style="font-size:13px;">templates/covers/</span> apparaissent ici automatiquement.</p>
+        <h1>Votre couverture, l'arme<br>de vente n° 1 sur Amazon.</h1>
+        <p class="lead">Parcourez des versions flat design générées pour votre livre — comme un générateur de logo — puis affinez : illustration IA, palette, textes. Tout est rendu en haute résolution côté serveur.</p>
       </div>
 
       ${!cover ? loadingCard('Chargement de la couverture…') : `
       <div class="cover-grid" style="margin-top:30px;">
         <div class="card card-pad params-card">
-          <div style="font-size:14px; font-weight:600; margin-bottom:14px;">Gabarit flat design</div>
-          <div class="cover-templates">
-            ${S.coverTemplates.map(t => `
-            <div class="cover-template ${cover.template === t.slug ? 'on' : ''}" onclick="App.setCoverTemplate('${esc(t.slug)}')">
-              <div class="thumb" style="background:linear-gradient(160deg, ${esc(t.palette.c1)} 0 58%, ${esc(t.palette.c2)} 58% 72%, ${esc(t.palette.c3)} 72%);"></div>
-              <div class="nm">${esc(t.name)}</div>
-            </div>`).join('')}
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px;">
+            <div style="font-size:14px; font-weight:600;">Versions proposées</div>
+            <span style="font-size:12px; color:var(--accent); cursor:pointer;" onclick="App.newCoverVariants()">${S.busy.variants ? 'Génération…' : '↻ 8 nouvelles versions'}</span>
           </div>
+          ${!S.coverVariants ? loadingCard('Composition des versions…') : `
+          <div class="cover-templates">
+            ${S.coverVariants.map((v, i) => `
+            <div class="cover-template ${v.selected ? 'on' : ''}" onclick="App.pickCoverVariant(${i})" title="${esc(v.layout)} · ${esc(v.palette.name)} · ${esc(v.motif)}">
+              <img class="thumb" src="${v.thumb}" alt="">
+              <div class="nm">${esc(v.palette.name)}</div>
+            </div>`).join('')}
+          </div>`}
+
+          <div style="font-size:14px; font-weight:600; margin:20px 0 8px;">Illustration flat design (IA)</div>
+          <label style="font-weight:400;"><span class="faint" style="font-size:12px;">Décrivez l'image souhaitée — le style flat est imposé automatiquement</span>
+            <textarea rows="3" id="cover-illus-prompt" placeholder="${esc(S.coverDefaultPrompt || '')}">${esc(cover.texts.illus_prompt || '')}</textarea>
+          </label>
+          <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+            <button class="btn btn-primary" style="padding:9px 14px; font-size:12.5px; flex:1;" onclick="App.generateIllustration()" ${S.busy.illus ? 'disabled' : ''}>
+              ${S.busy.illus ? '<span class="spinner"></span> Génération…' : '✦ Générer l’illustration'}
+            </button>
+            <button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px;" onclick="App.uploadCoverRef()" title="Image dont l'IA s'inspirera (style, sujet)">${S.coverHasRef ? '📎 Réf. ✓' : '📎 Image d’inspiration'}</button>
+            ${S.coverHasIllustration ? `<button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px;" onclick="App.clearIllustration()" title="Revenir au motif géométrique">✕</button>` : ''}
+          </div>
+          <div class="faint" style="font-size:11px; margin-top:7px;">Sans illustration IA, un motif géométrique flat assorti est dessiné automatiquement.</div>
 
           <div style="font-size:14px; font-weight:600; margin:20px 0 10px;">Palette</div>
           <div class="palette-row">
@@ -633,26 +650,28 @@
             <label>Sous-titre<input type="text" value="${esc(cover.texts.subtitle)}" oninput="App.setCoverText('subtitle', this.value)"></label>
             <label>Accroche (1ère de couv)<input type="text" value="${esc(cover.texts.tagline)}" oninput="App.setCoverText('tagline', this.value)"></label>
             <label>Auteur<input type="text" value="${esc(cover.texts.author)}" oninput="App.setCoverText('author', this.value)"></label>
-            <label>Texte de 4ème de couverture<textarea rows="7" oninput="App.setCoverText('back_text', this.value)">${esc(cover.texts.back_text)}</textarea></label>
+            <label>Texte de 4ème de couverture<textarea rows="6" oninput="App.setCoverText('back_text', this.value)">${esc(cover.texts.back_text)}</textarea></label>
             <label>Bio auteur<textarea rows="2" oninput="App.setCoverText('bio', this.value)">${esc(cover.texts.bio)}</textarea></label>
           </div>
 
           <button class="btn btn-soft" style="width:100%; margin-top:16px;" onclick="App.generateBackText()" ${S.busy.back ? 'disabled' : ''}>
             ${S.busy.back ? '<span class="spinner"></span> Rédaction…' : '✦ Générer les textes (accroche, 4ème, bio)'}
           </button>
-          <button class="btn btn-ghost" style="width:100%; margin-top:8px;" onclick="App.exportCoverJpg()" ${S.busy.jpg ? 'disabled' : ''}>
-            ${S.busy.jpg ? '<span class="spinner"></span> Export…' : 'Télécharger la 1ère de couv (JPG eBook)'}
+          <button class="btn btn-ghost" style="width:100%; margin-top:8px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&download=1', '_blank')">
+            Télécharger la 1ère de couv (JPG eBook 1600×2560)
           </button>
         </div>
 
         <div>
           <div class="cover-preview-zone">
             <div>
-              <div class="cover-face" id="cover-front" style="width:min(320px, 80vw);"></div>
-              <div class="cover-face-label">1ère de couverture</div>
+              <div class="cover-face" style="width:min(340px, 80vw);">
+                <img id="cover-front-img" src="api.php?r=coverstudio/front&id=${S.project.id}&t=${S.coverStamp || 0}" alt="1ère de couverture" style="width:100%; display:block; border-radius:2px;">
+              </div>
+              <div class="cover-face-label">1ère de couverture · rendu haute résolution</div>
             </div>
             <div>
-              <div class="cover-face" id="cover-back" style="width:min(320px, 80vw);"></div>
+              <div class="cover-face" id="cover-back" style="width:min(340px, 80vw);"></div>
               <div class="cover-face-label">4ème de couverture · zone code-barres réservée</div>
             </div>
           </div>
@@ -667,23 +686,42 @@
       const data = await Api.get('covers/get', { id: S.project.id });
       S.cover = data.cover;
       S.coverTemplates = data.templates;
+      S.coverHasIllustration = data.has_illustration;
+      S.coverHasRef = data.has_reference;
+      S.coverDefaultPrompt = data.default_prompt;
+      S.coverStamp = Date.now();
       render();
+      if (!S.coverVariants) loadCoverVariants();
     } catch (e) { toast(e.message, true); }
+  }
+
+  async function loadCoverVariants() {
+    setBusy('variants', true);
+    try {
+      const data = await Api.post('coverstudio/variants', { id: S.project.id, seed: S.coverSeed || 1 });
+      S.coverVariants = data.variants;
+    } catch (e) { toast(e.message, true); }
+    setBusy('variants', false);
+  }
+
+  function refreshFrontPreview() {
+    S.coverStamp = Date.now();
+    const img = document.getElementById('cover-front-img');
+    if (img) img.src = 'api.php?r=coverstudio/front&id=' + S.project.id + '&t=' + S.coverStamp;
   }
 
   async function injectCoverPreviews() {
     if (S.step !== 4 || !S.cover) return;
-    for (const face of ['front', 'back']) {
-      const host = document.getElementById('cover-' + face);
-      if (!host) continue;
-      try {
-        const response = await fetch('api.php?r=covers/render&id=' + S.project.id + '&face=' + face + '&t=' + Date.now(), { credentials: 'same-origin' });
-        const svg = await response.text();
-        host.innerHTML = svg;
-        const el = host.querySelector('svg');
-        if (el) { el.removeAttribute('width'); el.removeAttribute('height'); el.style.width = '100%'; }
-      } catch (_) { /* aperçu indisponible */ }
-    }
+    // 4ème de couverture : gabarit SVG rendu avec la palette courante
+    const host = document.getElementById('cover-back');
+    if (!host) return;
+    try {
+      const response = await fetch('api.php?r=covers/render&id=' + S.project.id + '&face=back&t=' + Date.now(), { credentials: 'same-origin' });
+      const svg = await response.text();
+      host.innerHTML = svg;
+      const el = host.querySelector('svg');
+      if (el) { el.removeAttribute('width'); el.removeAttribute('height'); el.style.width = '100%'; }
+    } catch (_) { /* aperçu indisponible */ }
   }
 
   function saveCover() {
@@ -693,9 +731,10 @@
           id: S.project.id, template: S.cover.template,
           palette: S.cover.palette, texts: S.cover.texts
         });
+        refreshFrontPreview();
         injectCoverPreviews();
       } catch (e) { toast(e.message, true); }
-    }, 500);
+    }, 700);
   }
 
   // ── Étape 5 : rédaction ──────────────────────────────────────────────────
@@ -1411,10 +1450,72 @@
       window.scrollTo(0, 0);
     },
 
-    // Étape 4 : couverture
+    // Étape 4 : couverture (studio)
     setCoverTemplate(slug) { S.cover.template = slug; render(); saveCover(); },
     setCoverColor(key, value) { S.cover.palette[key] = value; saveCover(); },
     setCoverText(key, value) { S.cover.texts[key] = value; saveCover(); },
+
+    async newCoverVariants() {
+      S.coverSeed = (S.coverSeed || 1) + 1;
+      await loadCoverVariants();
+      render();
+    },
+
+    async pickCoverVariant(index) {
+      const v = (S.coverVariants || [])[index];
+      if (!v) return;
+      try {
+        const data = await Api.post('coverstudio/select', {
+          id: S.project.id, layout: v.layout, motif: v.motif, palette: v.palette
+        });
+        S.cover = data.cover;
+        S.coverVariants.forEach((x, i) => { x.selected = i === index; });
+        render();
+        refreshFrontPreview();
+        injectCoverPreviews();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async generateIllustration() {
+      const prompt = (document.getElementById('cover-illus-prompt') || {}).value || '';
+      setBusy('illus', true);
+      try {
+        await Api.post('coverstudio/illustration', { id: S.project.id, prompt });
+        S.coverHasIllustration = true;
+        S.cover.texts.illus_prompt = prompt || S.coverDefaultPrompt;
+        toast('Illustration générée et intégrée à la couverture.');
+      } catch (e) { toast(e.message, true); }
+      setBusy('illus', false);
+      refreshFrontPreview();
+    },
+
+    async clearIllustration() {
+      try {
+        await Api.post('coverstudio/clear-illustration', { id: S.project.id });
+        S.coverHasIllustration = false;
+        render();
+        refreshFrontPreview();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    uploadCoverRef() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const form = new FormData();
+        form.append('id', S.project.id);
+        form.append('file', input.files[0]);
+        try {
+          await Api.upload('coverstudio/upload-ref', form);
+          S.coverHasRef = true;
+          toast('Image d’inspiration enregistrée — elle guidera la prochaine génération.');
+          render();
+        } catch (e) { toast(e.message, true); }
+      };
+      input.click();
+    },
 
     async generateBackText() {
       setBusy('back', true);
@@ -1427,12 +1528,6 @@
       } catch (e) { toast(e.message, true); }
       setBusy('back', false);
       injectCoverPreviews();
-    },
-
-    async exportCoverJpg() {
-      setBusy('jpg', true);
-      try { await exportCoverJpg(); } catch (e) { toast('Export JPG impossible : ' + e.message, true); }
-      setBusy('jpg', false);
     },
 
     async next4() {
@@ -1770,58 +1865,6 @@
     } catch (e) { toast(e.message, true); }
     S.busy.chapAction = null;
     render();
-  }
-
-  // ── Export JPG de la 1ère de couverture (eBook 1600×2560) ───────────────
-
-  async function exportCoverJpg() {
-    const response = await fetch('api.php?r=covers/render&id=' + S.project.id + '&face=front&t=' + Date.now(), { credentials: 'same-origin' });
-    let svg = await response.text();
-
-    // Polices incorporées en data URI (les URL externes sont ignorées dans un SVG rasterisé)
-    const fonts = [
-      ['instrument-serif', 'Instrument Serif', 'normal'],
-      ['instrument-sans', 'Instrument Sans', 'normal'],
-      ['ibm-plex-mono', 'IBM Plex Mono', 'normal']
-    ];
-    let css = '';
-    for (const [key, family, style] of fonts) {
-      try {
-        const fontResponse = await fetch('font.php?f=' + key, { credentials: 'same-origin' });
-        if (!fontResponse.ok) continue;
-        const buffer = await fontResponse.arrayBuffer();
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        for (let i = 0; i < bytes.length; i += 8192) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-        }
-        css += `@font-face{font-family:'${family}';font-style:${style};src:url(data:font/woff2;base64,${btoa(binary)}) format('woff2');}`;
-      } catch (_) { /* police absente : rendu avec substitut */ }
-    }
-    if (css) svg = svg.replace(/<svg([^>]*)>/, `<svg$1><style>${css}</style>`);
-
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const image = new Image();
-    await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = () => reject(new Error('rendu SVG refusé par le navigateur'));
-      image.src = url;
-    });
-
-    const canvas = document.createElement('canvas');
-    canvas.width = 1600;
-    canvas.height = 2560;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    URL.revokeObjectURL(url);
-
-    const link = document.createElement('a');
-    link.download = 'couverture-ebook-' + S.project.id + '.jpg';
-    link.href = canvas.toDataURL('image/jpeg', 0.92);
-    link.click();
   }
 
   boot();

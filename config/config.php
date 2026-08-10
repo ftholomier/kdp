@@ -57,6 +57,8 @@ return [
         'model_fast' => 'gemini-2.5-flash',
         // Modèle qualité maximale : rédaction des chapitres, retouches.
         'model_pro'  => 'gemini-2.5-pro',
+        // Modèle image (« nano banana ») : illustrations de couverture flat design.
+        'model_image' => 'gemini-2.5-flash-image',
         'timeout'         => 180,         // secondes par appel
         'connect_timeout' => 15,
         'max_retries'     => 2,           // relances automatiques par appel

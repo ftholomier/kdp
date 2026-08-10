@@ -113,6 +113,60 @@ final class Gemini
     }
 
     /**
+     * Génère une IMAGE (modèle « nano banana ») et renvoie ses octets bruts.
+     *
+     * @param string  $prompt         description de l'image souhaitée
+     * @param ?string $referencePath  image de référence optionnelle (JPEG/PNG)
+     *                                dont le modèle s'inspire
+     */
+    public static function image(string $prompt, ?string $referencePath = null): string
+    {
+        $cfg = Config::get('gemini');
+        $apiKey = trim((string) Settings::get('gemini.api_key', ''));
+        if ($apiKey === '') {
+            throw new \RuntimeException("Clé API Gemini absente : collez-la dans ⚡ Connecteurs.");
+        }
+        $model = (string) ($cfg['model_image'] ?? 'gemini-2.5-flash-image');
+
+        $parts = [['text' => $prompt]];
+        if ($referencePath !== null && is_file($referencePath)) {
+            $mime = str_ends_with(strtolower($referencePath), '.png') ? 'image/png' : 'image/jpeg';
+            $parts[] = ['inlineData' => [
+                'mimeType' => $mime,
+                'data'     => base64_encode((string) file_get_contents($referencePath)),
+            ]];
+        }
+        $body = [
+            'contents' => [['role' => 'user', 'parts' => $parts]],
+            'generationConfig' => ['responseModalities' => ['IMAGE']],
+        ];
+
+        $url = rtrim($cfg['endpoint'], '/') . '/models/' . rawurlencode($model)
+             . ':generateContent?key=' . rawurlencode($apiKey);
+        [$code, $response, $curlError] = self::post($url, (string) json_encode($body), $cfg, 120);
+
+        if ($curlError !== '') {
+            throw new \RuntimeException('Génération d\'image — réseau : ' . $curlError);
+        }
+        $data = json_decode($response, true);
+        if ($code !== 200 || !is_array($data)) {
+            $message = is_array($data) ? ($data['error']['message'] ?? $response) : $response;
+            throw new \RuntimeException('Génération d\'image (' . $code . ') : ' . mb_substr((string) $message, 0, 260));
+        }
+        foreach ((array) ($data['candidates'][0]['content']['parts'] ?? []) as $part) {
+            if (isset($part['inlineData']['data'])) {
+                $binary = base64_decode((string) $part['inlineData']['data'], true);
+                if ($binary !== false && $binary !== '') {
+                    return $binary;
+                }
+            }
+        }
+        $reason = $data['candidates'][0]['finishReason'] ?? 'aucune image dans la réponse';
+        throw new \RuntimeException('Génération d\'image : ' . $reason
+            . ' — vérifiez que le modèle image « ' . $model . ' » est disponible pour votre clé.');
+    }
+
+    /**
      * Liste des modèles Gemini disponibles pour la clé configurée
      * (cache disque 24 h). Vide si clé absente ou API injoignable.
      * @return array<int,array{id:string,label:string}>

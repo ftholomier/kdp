@@ -48,7 +48,15 @@ $injectSize = function (string $svg, float $wMm, float $hMm): string {
 $faceW = $trimW + $bleed;
 $faceH = $trimH + 2 * $bleed;
 $backSvg = $injectSize(Covers::render($cover, 'back'), $faceW, $faceH);
-$frontSvg = $injectSize(Covers::render($cover, 'front'), $faceW, $faceH);
+
+// 1ère de couverture : rendu studio (raster haute résolution) si choisi,
+// sinon gabarit SVG historique.
+if (($cover['template'] ?? '') === 'studio') {
+    $frontSvg = '<img src="api.php?r=coverstudio/front&id=' . (int) $project['id'] . '&t=' . time()
+        . '" alt="" style="width:' . $faceW . 'mm;height:' . $faceH . 'mm;object-fit:cover;display:block;">';
+} else {
+    $frontSvg = $injectSize(Covers::render($cover, 'front'), $faceW, $faceH);
+}
 
 $palette = $cover['palette'];
 $texts = $cover['texts'];

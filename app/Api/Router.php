@@ -12,6 +12,7 @@ use App\Core\Settings;
 use App\Core\Util;
 use App\Services\Canopy;
 use App\Services\ChapterTools;
+use App\Services\CoverStudio;
 use App\Services\Concepts;
 use App\Services\Covers;
 use App\Services\Docx;
@@ -203,9 +204,13 @@ final class Router
             // ── Étape 4 : couverture ──
             case 'covers/get':
                 $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 Http::ok([
-                    'cover'     => Covers::get($project, self::selectedConceptOrNull($project), $user),
-                    'templates' => Covers::templates(),
+                    'cover'            => $cover,
+                    'templates'        => Covers::templates(),
+                    'has_illustration' => is_file(CoverStudio::illusPath((int) $project['id'])),
+                    'has_reference'    => is_file(CoverStudio::refPath((int) $project['id'])),
+                    'default_prompt'   => CoverStudio::defaultPrompt($cover['texts']),
                 ]);
 
             case 'covers/save':
@@ -233,6 +238,97 @@ final class Router
                 header('Content-Type: image/svg+xml; charset=utf-8');
                 header('Cache-Control: no-store');
                 echo Covers::render($cover, (string) Http::in('face', 'front'));
+                exit;
+
+            // ── Studio de couvertures (variantes flat + illustration IA) ──
+            case 'coverstudio/variants':
+                Http::requirePost();
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $variants = CoverStudio::variants((int) Http::in('seed', 1));
+                $current = $cover['palette'];
+                Http::ok(['variants' => array_map(fn ($v) => [
+                    'layout'  => $v['layout'],
+                    'motif'   => $v['motif'],
+                    'palette' => $v['palette'],
+                    'thumb'   => CoverStudio::thumbnail($v, $cover['texts']),
+                    'selected'=> ($current['layout'] ?? '') === $v['layout']
+                        && ($current['motif'] ?? '') === $v['motif']
+                        && ($current['c1'] ?? '') === $v['palette']['c1'],
+                ], $variants)]);
+
+            case 'coverstudio/select':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $palette = (array) Http::in('palette', []);
+                $palette['layout'] = (string) Http::in('layout', 'bloc');
+                $palette['motif'] = (string) Http::in('motif', 'blob');
+                Covers::save((int) $project['id'], 'studio', $palette, array_merge($cover['texts'], (array) Http::in('texts', [])));
+                Http::ok(['cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
+
+            case 'coverstudio/illustration':
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $prompt = trim((string) Http::in('prompt', ''));
+                if ($prompt === '') {
+                    $prompt = CoverStudio::defaultPrompt($cover['texts']);
+                }
+                CoverStudio::generateIllustration((int) $project['id'], $prompt, $cover['palette']);
+                Covers::save((int) $project['id'], 'studio', $cover['palette'], array_merge($cover['texts'], ['illus_prompt' => $prompt]));
+                Http::ok(['generated' => true]);
+
+            case 'coverstudio/clear-illustration':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                @unlink(CoverStudio::illusPath((int) $project['id']));
+                Http::ok();
+
+            case 'coverstudio/upload-ref':
+                Http::requirePost();
+                $project = self::project((int) ($_POST['id'] ?? 0), $userId);
+                $file = $_FILES['file'] ?? null;
+                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                    Http::error('Fichier manquant.');
+                }
+                $info = @getimagesize($file['tmp_name']);
+                if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
+                    Http::error('Format accepté : JPEG, PNG ou WebP.');
+                }
+                $src = match ($info[2]) {
+                    IMAGETYPE_JPEG => imagecreatefromjpeg($file['tmp_name']),
+                    IMAGETYPE_PNG  => imagecreatefrompng($file['tmp_name']),
+                    IMAGETYPE_WEBP => imagecreatefromwebp($file['tmp_name']),
+                };
+                if (!$src) {
+                    Http::error('Image illisible.');
+                }
+                imagejpeg($src, CoverStudio::refPath((int) $project['id']), 92);
+                imagedestroy($src);
+                Http::ok();
+
+            case 'coverstudio/front':
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $palette = $cover['palette'];
+                $spec = [
+                    'layout'  => $palette['layout'] ?? 'bloc',
+                    'motif'   => $palette['motif'] ?? CoverStudio::motifFor((string) ($cover['texts']['title'] ?? '')),
+                    'palette' => $palette + ['name' => 'perso'],
+                ];
+                $illus = CoverStudio::illusPath((int) $project['id']);
+                $jpeg = CoverStudio::frontJpeg($spec, $cover['texts'], is_file($illus) ? $illus : null);
+                header('Content-Type: image/jpeg');
+                header('Cache-Control: no-store');
+                if (Http::in('download')) {
+                    header('Content-Disposition: attachment; filename="couverture-ebook-' . (int) $project['id'] . '.jpg"');
+                }
+                header('Content-Length: ' . strlen($jpeg));
+                echo $jpeg;
                 exit;
 
             case 'covers/validate':

@@ -74,9 +74,16 @@ final class Covers
             $value = (string) ($palette[$key] ?? '');
             $clean[$key] = preg_match('/^#[0-9a-fA-F]{3,8}$/', $value) ? $value : '#1B2A4A';
         }
+        // Studio : mise en page et motif choisis vivent dans le même JSON
+        if (in_array($palette['layout'] ?? '', CoverStudio::LAYOUTS, true)) {
+            $clean['layout'] = $palette['layout'];
+        }
+        if (in_array($palette['motif'] ?? '', CoverStudio::MOTIFS, true)) {
+            $clean['motif'] = $palette['motif'];
+        }
         $textsClean = [];
-        foreach (['title', 'subtitle', 'tagline', 'author', 'back_text', 'bio'] as $key) {
-            $textsClean[$key] = mb_substr(trim((string) ($texts[$key] ?? '')), 0, $key === 'back_text' ? 1500 : 300);
+        foreach (['title', 'subtitle', 'tagline', 'author', 'back_text', 'bio', 'illus_prompt'] as $key) {
+            $textsClean[$key] = mb_substr(trim((string) ($texts[$key] ?? '')), 0, $key === 'back_text' ? 1500 : ($key === 'illus_prompt' ? 800 : 300));
         }
         Db::run(
             'UPDATE covers SET template = ?, palette = ?, texts = ?, updated_at = ? WHERE project_id = ?',

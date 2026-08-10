@@ -17,21 +17,28 @@ final class Concepts
         $idea = trim((string) ($project['idea'] ?? ''));
         $ideaLine = $idea !== '' ? "Idée d'origine de l'auteur : « {$idea} »\n" : '';
 
-        // Connecteur Canopy : le top réel de la niche alimente la détection d'angles morts
+        // Le top réel de la niche alimente la détection d'angles morts :
+        // d'abord vos relevés de veille (gratuits), sinon Canopy (cache 7 j)
         $realData = '';
         $grounded = false;
-        if (Canopy::enabled()) {
-            try {
+        try {
+            $snapshot = null;
+            $fromWatch = Watch::findRelevant((int) $project['user_id'], $theme['name'] . ' ' . $idea, 1);
+            if ($fromWatch) {
+                $snapshot = $fromWatch[0];
+            } elseif (Canopy::enabled()) {
                 $snapshot = Canopy::marketSnapshot($theme['name']);
-                if ($snapshot) {
-                    $realData = "TOP RÉSULTATS RÉELS AMAZON POUR CETTE NICHE (via API — analyse ces titres "
-                        . "existants pour repérer les angles morts, les prix pratiqués et le niveau de "
-                        . "concurrence réel) :\n" . Canopy::formatSnapshot($snapshot) . "\n";
-                    $grounded = true;
-                }
-            } catch (\Throwable $e) {
-                error_log('[canopy] concepts : ' . $e->getMessage());
             }
+            if ($snapshot) {
+                $date = mb_substr((string) ($snapshot['watch_date'] ?? ''), 0, 10);
+                $realData = "TOP RÉSULTATS RÉELS AMAZON POUR CETTE NICHE ("
+                    . ($fromWatch ? 'relevé de votre veille marché' . ($date ? ' du ' . $date : '') : 'via API')
+                    . " — analyse ces titres existants pour repérer les angles morts, les prix pratiqués "
+                    . "et le niveau de concurrence réel) :\n" . Canopy::formatSnapshot($snapshot) . "\n";
+                $grounded = true;
+            }
+        } catch (\Throwable $e) {
+            error_log('[canopy] concepts : ' . $e->getMessage());
         }
 
         $prompt = "Tu es directeur éditorial spécialisé en autoédition Amazon KDP France.\n"

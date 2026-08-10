@@ -133,6 +133,58 @@ final class Watch
         );
     }
 
+    /**
+     * Relevés de veille pertinents pour un texte donné (idée, nom de thème) :
+     * source PRIORITAIRE et GRATUITE des analyses (étapes 1 et 2) — vos clics
+     * dans le tableau de bord alimentent directement la solution.
+     */
+    public static function findRelevant(int $userId, string $text, int $max = 2): array
+    {
+        self::ensureTables();
+        $needle = self::normalize($text);
+        if ($needle === '') {
+            return [];
+        }
+        $matches = [];
+        foreach (Db::all('SELECT term, snapshot, updated_at FROM watch_terms WHERE user_id = ? AND snapshot IS NOT NULL', [$userId]) as $row) {
+            $term = self::normalize((string) $row['term']);
+            if ($term === '') {
+                continue;
+            }
+            // Correspondance : terme contenu dans le texte, ou majorité de ses
+            // mots significatifs présents dans le texte.
+            $score = 0;
+            if (str_contains($needle, $term)) {
+                $score = 100;
+            } else {
+                $words = array_filter(explode(' ', $term), fn ($w) => mb_strlen($w) > 3);
+                if ($words) {
+                    $hits = count(array_filter($words, fn ($w) => str_contains($needle, $w)));
+                    $ratio = $hits / count($words);
+                    if ($ratio >= 0.5) {
+                        $score = (int) round($ratio * 90);
+                    }
+                }
+            }
+            if ($score > 0) {
+                $snapshot = json_decode((string) $row['snapshot'], true);
+                if (is_array($snapshot)) {
+                    $snapshot['watch_date'] = (string) ($row['updated_at'] ?? '');
+                    $matches[] = ['score' => $score, 'snapshot' => $snapshot];
+                }
+            }
+        }
+        usort($matches, fn ($a, $b) => $b['score'] <=> $a['score']);
+        return array_column(array_slice($matches, 0, $max), 'snapshot');
+    }
+
+    private static function normalize(string $text): string
+    {
+        $text = mb_strtolower(trim($text));
+        $text = (string) iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text);
+        return trim(preg_replace('/[^a-z0-9]+/', ' ', $text) ?? '');
+    }
+
     // ── Interne ────────────────────────────────────────────────────────────
 
     private static function delta(?array $current, ?array $previous): array

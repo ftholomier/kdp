@@ -5,6 +5,7 @@ namespace App\Services;
 
 use App\Core\Config;
 use App\Core\Db;
+use App\Services\Watch;
 
 /**
  * Étape 1 — Niche : analyse d'une idée ou tendances des catégories Amazon.
@@ -27,8 +28,9 @@ SPEC;
 
     public static function analyze(array $project, string $idea): array
     {
-        // Connecteur Canopy : vraies données Amazon injectées dans l'analyse
-        [$realData, $grounded] = self::realMarketData($idea);
+        // Vraies données Amazon : d'abord VOS relevés de veille (gratuits),
+        // sinon le connecteur Canopy (cache 7 jours)
+        [$realData, $grounded] = self::realMarketData($project, $idea);
 
         $prompt = "Tu es analyste du marché de l'autoédition Amazon KDP France (Amazon.fr). "
             . "Un auteur décrit son idée de livre :\n\n« " . trim($idea) . " »\n\n"
@@ -54,12 +56,31 @@ SPEC;
     }
 
     /**
-     * Données réelles Amazon via Canopy : jusqu'à N recherches (mots-clés
-     * dérivés de l'idée par Gemini), résumées pour le prompt d'analyse.
+     * Données réelles Amazon pour l'analyse, par ordre de priorité :
+     *   1. les relevés du tableau de bord « Veille marché » qui correspondent
+     *      à l'idée (déjà payés d'un clic : réutilisation GRATUITE) ;
+     *   2. sinon le connecteur Canopy (jusqu'à N recherches, cache 7 jours).
      * @return array{0:string,1:bool} texte formaté, ancrage réel effectif
      */
-    private static function realMarketData(string $idea): array
+    private static function realMarketData(array $project, string $idea): array
     {
+        // 1) Relevés de veille existants — aucun crédit consommé
+        try {
+            $watchSnapshots = Watch::findRelevant((int) $project['user_id'], $idea);
+            if ($watchSnapshots) {
+                $formatted = '';
+                foreach ($watchSnapshots as $snapshot) {
+                    $date = mb_substr((string) ($snapshot['watch_date'] ?? ''), 0, 10);
+                    $formatted .= '[Relevé de votre veille marché' . ($date ? ' du ' . $date : '') . "]\n"
+                        . Canopy::formatSnapshot($snapshot) . "\n";
+                }
+                return [$formatted, true];
+            }
+        } catch (\Throwable $e) {
+            error_log('[veille] analyse : ' . $e->getMessage());
+        }
+
+        // 2) Connecteur Canopy en direct (cache 7 jours)
         if (!Canopy::enabled()) {
             return ['', false];
         }

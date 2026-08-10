@@ -105,6 +105,17 @@ tableau de bord et collez-la dans **⚡ Connecteurs**. Dès qu'elle est active :
   suivie en projet. Avec 100 crédits/mois : ~25 niches suivies au rythme
   d'un relevé hebdomadaire.
 
+**Circuit de la donnée** — vos clics alimentent toute la solution. Quand une
+analyse (étape 1) ou une génération de concepts (étape 2) a besoin de données
+marché, l'ordre de priorité est :
+
+1. **vos relevés de veille** dont le terme correspond à l'idée ou au thème
+   (réutilisation **gratuite**, datée dans le prompt : « relevé de votre
+   veille du 2026-08-10 ») ;
+2. sinon le **cache Canopy 7 jours** (une recherche déjà faite ne recoûte rien) ;
+3. sinon un **appel API réel** (plafonné à `searches_per_analysis`) ;
+4. sinon (pas de clé, quota atteint, erreur) : **Gemini + Google Search seul**.
+
 Pensé pour l'**offre gratuite** (~100 requêtes/mois) :
 
 - cache disque 7 jours (`canopy.cache_ttl`) : une même recherche ne consomme

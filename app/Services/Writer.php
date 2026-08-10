@@ -18,6 +18,18 @@ use App\Core\Util;
  */
 final class Writer
 {
+    /** Compte les sections planifiées et déjà rédigées du projet. */
+    private static function totals(int $projectId): array
+    {
+        $row = Db::one(
+            "SELECT COUNT(s.id) AS sections, COALESCE(SUM(s.status = 'done'), 0) AS done
+             FROM chapters c JOIN sections s ON s.chapter_id = c.id
+             WHERE c.project_id = ?",
+            [$projectId]
+        );
+        return ['sections' => (int) ($row['sections'] ?? 0), 'done' => (int) ($row['done'] ?? 0)];
+    }
+
     public static function start(array $project): void
     {
         $projectId = (int) $project['id'];

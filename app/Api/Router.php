@@ -83,7 +83,12 @@ final class Router
             Http::error($e->getMessage(), 502);
         } catch (\Throwable $e) {
             error_log('[api] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
-            Http::error((bool) Config::get('app.debug') ? $e->getMessage() : 'Erreur interne.', 500);
+            // Application mono-utilisateur : on affiche toujours le vrai message
+            // (plus de « Erreur interne » muet impossible à diagnostiquer).
+            Http::error(
+                mb_substr($e->getMessage(), 0, 300) . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+                500
+            );
         }
     }
 

@@ -15,12 +15,12 @@ $appName = htmlspecialchars((string) Config::get('app.name', 'Tirage'));
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?= kdp_asset('assets/css/app.css') ?>">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231B2A4A'/><text x='16' y='23' text-anchor='middle' font-family='Georgia,serif' font-size='20' fill='%23F4EFE4'>T</text></svg>">
 </head>
 <body>
 <div id="app"><div class="boot-splash"><div class="logo-mark logo-mark-lg">T</div></div></div>
-<script src="assets/js/api.js"></script>
-<script src="assets/js/app.js"></script>
+<script src="<?= kdp_asset('assets/js/api.js') ?>"></script>
+<script src="<?= kdp_asset('assets/js/app.js') ?>"></script>
 </body>
 </html>

@@ -3,6 +3,19 @@ declare(strict_types=1);
 
 define('APP_ROOT', dirname(__DIR__));
 
+/**
+ * URL d'un asset public suffixée de la date de modification du fichier
+ * (?v=timestamp) : le navigateur recharge automatiquement JS/CSS dès qu'ils
+ * changent — plus besoin de vider le cache après un déploiement.
+ */
+function kdp_asset(string $rel): string
+{
+    $rel = ltrim($rel, '/');
+    $file = APP_ROOT . '/public/' . $rel;
+    $version = is_file($file) ? (string) filemtime($file) : (string) time();
+    return $rel . '?v=' . $version;
+}
+
 spl_autoload_register(function (string $class): void {
     if (str_starts_with($class, 'App\\')) {
         $path = APP_ROOT . '/app/' . str_replace('\\', '/', substr($class, 4)) . '.php';

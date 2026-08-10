@@ -1,11 +1,18 @@
 <?php
 /**
- * Tirage — KDP Studio : configuration de l'application.
+ * Tirage — KDP Studio : VALEURS PAR DÉFAUT.
  *
- * TOUTES les variables de l'application sont externalisées ici (aucun .env).
- * Pour surcharger localement sans toucher à ce fichier versionné, créez
- * config/config.local.php qui retourne un tableau partiel : il sera fusionné
- * par-dessus celui-ci (voir config.local.sample.php).
+ * ⚠️  N'ÉDITEZ PAS CE FICHIER pour vos réglages : il fait partie du projet et
+ *     un transfert/mise à jour l'écrase. Vos réglages personnels (connexion
+ *     MySQL, clés API…) vont dans config/config.local.php — un fichier NON
+ *     versionné qu'aucun transfert ne touche.
+ *
+ *     → Le plus simple : ouvrez public/setup.php, il crée config.local.php
+ *       pour vous. Ou copiez config.local.sample.php en config.local.php.
+ *       Les clés API se collent aussi directement dans l'appli (⚡ Connecteurs).
+ *
+ * Tout est externalisé ici (aucun .env). config.local.php est fusionné
+ * par-dessus ces valeurs par défaut.
  */
 return [
 

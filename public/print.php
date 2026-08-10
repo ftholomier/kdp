@@ -175,6 +175,6 @@ window.GEO = <?= json_encode($geometry, JSON_UNESCAPED_UNICODE) ?>;
 window.MODE = <?= json_encode($mode) ?>;
 window.AUTO_PRINT = <?= !empty($_GET['auto']) ? 'true' : 'false' ?>;
 </script>
-<script src="assets/js/paginate.js"></script>
+<script src="<?= kdp_asset('assets/js/paginate.js') ?>"></script>
 </body>
 </html>

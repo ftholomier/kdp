@@ -183,31 +183,109 @@ final class Canopy
         return $products ?: null;
     }
 
-    /** Appel de diagnostic SANS cache (route canopy/test) : résultat brut ou exception. */
+    /**
+     * Diagnostic complet (route canopy/test) — ne LÈVE JAMAIS d'exception :
+     * renvoie la vérité brute de l'échange (code HTTP, corps, erreurs GraphQL)
+     * pour identifier précisément un éventuel écart de schéma.
+     */
     public static function test(): array
     {
         if (!self::enabled()) {
-            throw new \RuntimeException('Clé API Canopy absente : collez-la dans l\'écran Connecteurs.');
+            return ['ok' => false, 'stage' => 'config', 'message' => 'Clé API Canopy absente : collez-la ci-dessus puis Enregistrez avant de tester.'];
         }
-        $data = self::graphql(self::SEARCH_QUERY, ['searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => '1']);
-        $results = $data['amazonProductSearchResults']['productResults']['results'] ?? [];
-        return [
-            'results_count' => count((array) $results),
-            'sample'        => array_slice(array_map(
-                fn ($r) => ['title' => $r['title'] ?? '?', 'price' => $r['price']['display'] ?? null, 'rating' => $r['rating'] ?? null],
-                (array) $results
-            ), 0, 3),
-            'usage'         => self::status(),
+
+        [$code, $response, $curlError] = self::rawPost(self::SEARCH_QUERY, [
+            'searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => '1',
+        ]);
+        self::bumpUsage();
+
+        $out = [
+            'ok'        => false,
+            'http_code' => $code,
+            'domain'    => self::domain(),
+            'usage'     => self::status(),
+            'excerpt'   => mb_substr(preg_replace('/\s+/', ' ', (string) $response) ?? '', 0, 600),
         ];
+
+        if ($curlError !== '') {
+            $out['stage'] = 'network';
+            $out['message'] = 'Connexion à Canopy impossible : ' . $curlError
+                . ' (vérifiez que votre hébergeur autorise les appels HTTPS sortants).';
+            return $out;
+        }
+
+        $decoded = json_decode((string) $response, true);
+        if ($code === 401 || $code === 403) {
+            $out['stage'] = 'auth';
+            $out['message'] = 'Clé API refusée par Canopy (HTTP ' . $code . '). Vérifiez la clé copiée depuis votre tableau de bord canopyapi.co.';
+            return $out;
+        }
+        if (!is_array($decoded)) {
+            $out['stage'] = 'http';
+            $out['message'] = 'Réponse inattendue de Canopy (HTTP ' . $code . '). Voir le détail brut ci-dessous.';
+            return $out;
+        }
+        if (!empty($decoded['errors'])) {
+            $out['stage'] = 'graphql';
+            $out['message'] = 'Canopy a répondu, mais la requête ne correspond pas à son schéma : '
+                . mb_substr((string) ($decoded['errors'][0]['message'] ?? 'erreur GraphQL'), 0, 240)
+                . ' — copiez ce message, il me permet de corriger la requête.';
+            $out['graphql_errors'] = array_map(fn ($e) => (string) ($e['message'] ?? ''), (array) $decoded['errors']);
+            return $out;
+        }
+
+        // Succès : on tente d'extraire les résultats de façon tolérante
+        $results = self::pluckResults($decoded['data'] ?? []);
+        $out['ok'] = true;
+        $out['stage'] = 'success';
+        $out['results_count'] = count($results);
+        $out['sample'] = array_slice(array_map(fn ($r) => [
+            'title'  => mb_substr((string) ($r['title'] ?? '?'), 0, 70),
+            'price'  => $r['price']['display'] ?? ($r['price']['value'] ?? null),
+            'rating' => $r['rating'] ?? null,
+        ], $results), 0, 3);
+        $out['message'] = $results
+            ? 'Connexion opérationnelle — ' . count($results) . ' résultats Amazon reçus.'
+            : 'Canopy a répondu (HTTP 200) mais aucun produit n\'a été extrait : le schéma diffère peut-être. Détail brut ci-dessous.';
+        return $out;
+    }
+
+    /** Extraction tolérante d'une liste de produits, quel que soit le chemin. */
+    private static function pluckResults(array $data): array
+    {
+        // Chemin attendu
+        $path = $data['amazonProductSearchResults']['productResults']['results'] ?? null;
+        if (is_array($path) && $path) {
+            return $path;
+        }
+        // Recherche récursive d'un tableau d'objets contenant un titre + asin
+        $found = [];
+        $walk = function ($node) use (&$walk, &$found): void {
+            if (!is_array($node)) {
+                return;
+            }
+            if (isset($node[0]) && is_array($node[0]) && (isset($node[0]['title']) || isset($node[0]['asin']))) {
+                $found = $node;
+                return;
+            }
+            foreach ($node as $child) {
+                if (!$found) {
+                    $walk($child);
+                }
+            }
+        };
+        $walk($data);
+        return $found;
     }
 
     // ── Interne ────────────────────────────────────────────────────────────
 
-    /** @throws \RuntimeException en cas d'erreur HTTP ou GraphQL */
-    private static function graphql(string $query, array $variables): array
+    /** POST GraphQL brut. @return array{0:int,1:string,2:string} code, corps, erreur curl */
+    private static function rawPost(string $query, array $variables): array
     {
         $cfg = Config::get('canopy');
         $payload = json_encode(['query' => $query, 'variables' => $variables], JSON_UNESCAPED_UNICODE);
+        $apiKey = trim((string) Settings::get('canopy.api_key', ''));
 
         $ch = curl_init((string) ($cfg['endpoint'] ?? 'https://graphql.canopyapi.co/'));
         curl_setopt_array($ch, [
@@ -215,7 +293,9 @@ final class Canopy
             CURLOPT_POSTFIELDS     => $payload,
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
-                'API-KEY: ' . trim((string) Settings::get('canopy.api_key', '')),
+                'Accept: application/json',
+                'API-KEY: ' . $apiKey,                 // en-tête documenté par Canopy
+                'Authorization: Bearer ' . $apiKey,    // variante Bearer (l'un ou l'autre suffit)
             ],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 10,
@@ -227,12 +307,19 @@ final class Canopy
         $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 
+        return [$code, is_string($response) ? $response : '', $curlError];
+    }
+
+    /** @throws \RuntimeException en cas d'erreur HTTP ou GraphQL */
+    private static function graphql(string $query, array $variables): array
+    {
+        [$code, $response, $curlError] = self::rawPost($query, $variables);
         self::bumpUsage(); // chaque appel réel compte, même en erreur, pour rester prudent
 
         if ($curlError !== '') {
             throw new \RuntimeException('Canopy réseau : ' . $curlError);
         }
-        $decoded = json_decode((string) $response, true);
+        $decoded = json_decode($response, true);
         if ($code === 401 || $code === 403) {
             throw new \RuntimeException('Canopy : clé API refusée (HTTP ' . $code . ').');
         }
@@ -240,7 +327,7 @@ final class Canopy
             throw new \RuntimeException('Canopy : limite de requêtes atteinte (HTTP 429).');
         }
         if ($code !== 200 || !is_array($decoded)) {
-            throw new \RuntimeException('Canopy HTTP ' . $code . ' : ' . mb_substr((string) $response, 0, 200));
+            throw new \RuntimeException('Canopy HTTP ' . $code . ' : ' . mb_substr($response, 0, 200));
         }
         if (!empty($decoded['errors'])) {
             $message = $decoded['errors'][0]['message'] ?? 'erreur GraphQL';

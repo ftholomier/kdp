@@ -1135,7 +1135,7 @@
     const testResult = key => {
       const r = (S.testResults || {})[key];
       if (!r) return '';
-      return `<div class="note ${r.ok ? 'note-ok' : 'note-warn'}" style="margin:12px 0 0;">${r.ok ? '✓' : '!'} ${esc(r.message)}</div>`;
+      return `<div class="note ${r.ok ? 'note-ok' : 'note-warn'}" style="margin:12px 0 0; white-space:pre-line; word-break:break-word;">${r.ok ? '✓' : '!'} ${esc(r.message)}</div>`;
     };
     return `
     <div class="modal-backdrop" onclick="if(event.target===this)App.closeModal()">
@@ -1698,14 +1698,18 @@
       S.modal = connectorsModalView(S.connectors); render();
       try {
         const data = await Api.post('canopy/test', {});
-        const sample = (data.test.sample || []).map(p => p.title).join(' · ');
-        S.testResults.canopy = {
-          ok: true,
-          message: 'Connexion opérationnelle — ' + data.test.results_count + ' résultats Amazon reçus'
-            + (sample ? ' (ex. : ' + sample.slice(0, 110) + '…)' : '')
-            + '. Quota : ' + data.test.usage.used + '/' + data.test.usage.budget + '.'
-        };
-        if (S.app.canopy) S.app.canopy = data.test.usage;
+        const t = data.test || {};
+        let message = t.message || 'Réponse reçue.';
+        if (t.ok && t.sample && t.sample.length) {
+          message += ' Ex. : ' + t.sample.map(p => p.title).join(' · ').slice(0, 120) + '…';
+        }
+        // En cas d'échec, on montre le détail brut pour diagnostic précis
+        if (!t.ok) {
+          if (t.http_code) message += ' [HTTP ' + t.http_code + ']';
+          if (t.excerpt) message += '\nRéponse Canopy : ' + t.excerpt;
+        }
+        S.testResults.canopy = { ok: !!t.ok, message };
+        if (t.usage && S.app.canopy) S.app.canopy = t.usage;
       } catch (e) {
         S.testResults.canopy = { ok: false, message: e.message };
       }

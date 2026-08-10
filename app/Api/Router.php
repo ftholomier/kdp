@@ -374,11 +374,8 @@ final class Router
 
             case 'canopy/test':
                 Http::requirePost();
-                try {
-                    Http::ok(['test' => Canopy::test()]);
-                } catch (\Throwable $e) {
-                    Http::error('Test Canopy : ' . $e->getMessage(), 502);
-                }
+                // Le diagnostic ne lève jamais : on renvoie toujours 200 avec le détail brut.
+                Http::ok(['test' => Canopy::test()]);
 
             case 'gemini/test':
                 Http::requirePost();

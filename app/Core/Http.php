@@ -12,7 +12,14 @@ final class Http
         http_response_code($code);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
-        echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        // JSON_INVALID_UTF8_SUBSTITUTE : un message d'erreur contenant des
+        // octets non-UTF8 (réponse brute d'une API tierce) ne doit jamais
+        // faire échouer json_encode et priver le client du message.
+        $json = json_encode(
+            $data,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR
+        );
+        echo $json !== false ? $json : '{"ok":false,"error":"Réponse non encodable."}';
         exit;
     }
 

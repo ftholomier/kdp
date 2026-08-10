@@ -6,6 +6,10 @@
 (function () {
   'use strict';
 
+  // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
+  // version est bien chargée (utile en cas de cache navigateur récalcitrant).
+  const BUILD = '2026-08-10 · c5';
+
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
   const PHOTO_STYLES = [
@@ -1186,7 +1190,8 @@
           ${testResult('canopy')}
         </div>
 
-        <div class="foot">
+        <div class="foot" style="align-items:center;">
+          <span class="faint" style="font-size:11px; margin-right:auto;">Version ${BUILD}</span>
           <button class="btn btn-ghost" onclick="App.closeModal()">Fermer</button>
           <button class="btn btn-primary" onclick="App.saveConnectors()" ${S.busy.connectors ? 'disabled' : ''}>${S.busy.connectors ? '<span class="spinner"></span> ' : ''}Enregistrer</button>
         </div>

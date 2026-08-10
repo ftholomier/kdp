@@ -197,7 +197,6 @@ final class Canopy
         [$code, $response, $curlError] = self::rawPost(self::SEARCH_QUERY, [
             'searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => '1',
         ]);
-        self::bumpUsage();
 
         $out = [
             'ok'        => false,
@@ -234,10 +233,12 @@ final class Canopy
             return $out;
         }
 
-        // Succès : on tente d'extraire les résultats de façon tolérante
+        // Succès : Canopy a bien servi une réponse → on compte cette requête
+        self::bumpUsage();
         $results = self::pluckResults($decoded['data'] ?? []);
         $out['ok'] = true;
         $out['stage'] = 'success';
+        $out['usage'] = self::status(); // compteur rafraîchi après incrément
         $out['results_count'] = count($results);
         $out['sample'] = array_slice(array_map(fn ($r) => [
             'title'  => mb_substr((string) ($r['title'] ?? '?'), 0, 70),
@@ -314,7 +315,6 @@ final class Canopy
     private static function graphql(string $query, array $variables): array
     {
         [$code, $response, $curlError] = self::rawPost($query, $variables);
-        self::bumpUsage(); // chaque appel réel compte, même en erreur, pour rester prudent
 
         if ($curlError !== '') {
             throw new \RuntimeException('Canopy réseau : ' . $curlError);
@@ -333,6 +333,8 @@ final class Canopy
             $message = $decoded['errors'][0]['message'] ?? 'erreur GraphQL';
             throw new \RuntimeException('Canopy GraphQL : ' . mb_substr((string) $message, 0, 200));
         }
+        // Requête réellement servie par Canopy → on la compte (colle au tableau de bord Canopy)
+        self::bumpUsage();
         return (array) ($decoded['data'] ?? []);
     }
 
@@ -365,6 +367,12 @@ final class Canopy
         $month = date('Y-m');
         $data = [$month => (int) ($data[$month] ?? 0) + 1]; // on ne garde que le mois courant
         @file_put_contents($file, json_encode($data));
+    }
+
+    /** Remet à zéro le compteur local (ex. à l'enregistrement d'une nouvelle clé). */
+    public static function resetUsage(): void
+    {
+        @file_put_contents(self::usageFile(), json_encode([date('Y-m') => 0]));
     }
 
     private static function usageFile(): string

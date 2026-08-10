@@ -363,6 +363,10 @@ final class Router
                         Settings::set($setting, '');
                     } elseif ($value !== '') {
                         Settings::set($setting, $value);
+                        // Nouvelle clé Canopy : le compteur local repart de zéro
+                        if ($setting === 'canopy.api_key') {
+                            Canopy::resetUsage();
+                        }
                     }
                 }
                 foreach (['model_fast' => 'gemini.model_fast', 'model_pro' => 'gemini.model_pro', 'canopy_domain' => 'canopy.domain'] as $field => $setting) {

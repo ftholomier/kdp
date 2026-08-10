@@ -53,14 +53,28 @@ final class Canopy
     /** État du connecteur (affiché dans l'interface). */
     public static function status(): array
     {
-        $usage = self::usage();
-        $budget = (int) Config::get('canopy.monthly_budget', 95);
+        $store = self::usageStore();
+        $month = date('Y-m');
+        $configBudget = (int) Config::get('canopy.monthly_budget', 100);
+
+        // Source de vérité prioritaire : le quota réel renvoyé par Canopy dans
+        // ses en-têtes lors du dernier appel de ce mois-ci.
+        if (($store['real_month'] ?? '') === $month && isset($store['real_used'])) {
+            $used = (int) $store['real_used'];
+            $budget = (int) ($store['real_limit'] ?? $configBudget);
+            $real = true;
+        } else {
+            $used = (int) ($store[$month] ?? 0);
+            $budget = $configBudget;
+            $real = false;
+        }
         return [
             'enabled'   => self::enabled(),
-            'used'      => $usage,
+            'used'      => $used,
             'budget'    => $budget,
-            'exhausted' => self::enabled() && $usage >= $budget,
+            'exhausted' => self::enabled() && $used >= $budget,
             'domain'    => self::domain(),
+            'real'      => $real, // true = chiffre en direct de Canopy, false = estimation locale
         ];
     }
 
@@ -236,7 +250,8 @@ final class Canopy
             return $out;
         }
 
-        // Succès : Canopy a bien servi une réponse → on compte cette requête
+        // Succès : Canopy a bien servi une réponse → quota réel si dispo, sinon +1 local
+        self::recordUsageFromHeaders($headers);
         self::bumpUsage();
         $results = self::pluckResults($decoded['data'] ?? []);
         $out['ok'] = true;
@@ -343,7 +358,7 @@ final class Canopy
     /** @throws \RuntimeException en cas d'erreur HTTP ou GraphQL */
     private static function graphql(string $query, array $variables): array
     {
-        [$code, $response, $curlError] = self::rawPost($query, $variables);
+        [$code, $response, $curlError, $headers] = self::rawPost($query, $variables);
 
         if ($curlError !== '') {
             throw new \RuntimeException('Canopy réseau : ' . $curlError);
@@ -362,7 +377,9 @@ final class Canopy
             $message = $decoded['errors'][0]['message'] ?? 'erreur GraphQL';
             throw new \RuntimeException('Canopy GraphQL : ' . mb_substr((string) $message, 0, 200));
         }
-        // Requête réellement servie par Canopy → on la compte (colle au tableau de bord Canopy)
+        // Requête réellement servie par Canopy : on enregistre le quota réel
+        // (en-têtes) si disponible, sinon on incrémente le compteur local estimé.
+        self::recordUsageFromHeaders($headers);
         self::bumpUsage();
         return (array) ($decoded['data'] ?? []);
     }
@@ -383,19 +400,56 @@ final class Canopy
         @file_put_contents(self::cacheDir() . '/canopy-' . $key . '.json', json_encode($data, JSON_UNESCAPED_UNICODE));
     }
 
-    private static function usage(): int
+    private static function usageStore(): array
     {
-        $data = json_decode((string) @file_get_contents(self::usageFile()), true) ?: [];
-        return (int) ($data[date('Y-m')] ?? 0);
+        $data = json_decode((string) @file_get_contents(self::usageFile()), true);
+        return is_array($data) ? $data : [];
     }
 
     private static function bumpUsage(): void
     {
-        $file = self::usageFile();
-        $data = json_decode((string) @file_get_contents($file), true) ?: [];
+        $store = self::usageStore();
         $month = date('Y-m');
-        $data = [$month => (int) ($data[$month] ?? 0) + 1]; // on ne garde que le mois courant
-        @file_put_contents($file, json_encode($data));
+        $store[$month] = (int) ($store[$month] ?? 0) + 1;
+        @file_put_contents(self::usageFile(), json_encode($store));
+    }
+
+    /**
+     * Enregistre le quota RÉEL renvoyé par Canopy dans ses en-têtes de réponse
+     * (source de vérité prioritaire sur le compteur local estimé).
+     */
+    private static function recordUsageFromHeaders(array $headers): void
+    {
+        $limit = null;
+        $remaining = null;
+        $used = null;
+        foreach ($headers as $name => $value) {
+            if (!is_numeric($value)) {
+                continue;
+            }
+            $v = (int) $value;
+            if (preg_match('/remaining/i', $name)) {
+                $remaining = $v;
+            } elseif (preg_match('/(used|consumed|count)/i', $name)) {
+                $used = $v;
+            } elseif (preg_match('/(limit|quota|cap|total)/i', $name) && !preg_match('/(reset|window|per)/i', $name)) {
+                $limit = $v;
+            }
+        }
+        if ($remaining === null && $used === null) {
+            return; // aucun en-tête de quota exploitable
+        }
+        if ($used === null) {
+            $base = $limit ?? (int) Config::get('canopy.monthly_budget', 100);
+            $used = max(0, $base - (int) $remaining);
+        }
+        $store = self::usageStore();
+        $store['real_month'] = date('Y-m');
+        $store['real_used']  = $used;
+        if ($limit !== null) {
+            $store['real_limit'] = $limit;
+        }
+        @file_put_contents(self::usageFile(), json_encode($store));
     }
 
     /** Remet à zéro le compteur local (ex. à l'enregistrement d'une nouvelle clé). */

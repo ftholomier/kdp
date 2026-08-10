@@ -23,7 +23,7 @@ use App\Core\Settings;
 final class Canopy
 {
     private const SEARCH_QUERY = <<<'GQL'
-    query Search($searchTerm: String!, $domain: AmazonDomain!, $page: String!) {
+    query Search($searchTerm: String!, $domain: AmazonDomain!, $page: BigInt) {
       amazonProductSearchResults(input: { searchTerm: $searchTerm, domain: $domain }) {
         productResults(input: { page: $page }) {
           results {
@@ -157,7 +157,7 @@ final class Canopy
             $data = self::graphql(self::SEARCH_QUERY, [
                 'searchTerm' => $term,
                 'domain'     => $domain,
-                'page'       => (string) $page,
+                'page'       => $page, // BigInt : entier attendu par Canopy
             ]);
         } catch (\Throwable $e) {
             error_log('[canopy] ' . $e->getMessage());
@@ -195,7 +195,7 @@ final class Canopy
         }
 
         [$code, $response, $curlError] = self::rawPost(self::SEARCH_QUERY, [
-            'searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => '1',
+            'searchTerm' => 'carnet de notes', 'domain' => self::domain(), 'page' => 1,
         ]);
 
         $out = [

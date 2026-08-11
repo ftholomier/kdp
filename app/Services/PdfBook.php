@@ -74,11 +74,14 @@ final class PdfComposer
     private float $titleSize = 21.0;
     private string $opener = 'editorial';  // style d'ouverture de chapitre
 
-    // Composition en colonnes (thème premium : corps sur 2 colonnes)
+    // Composition en colonnes (thème premium : régions à 1, 2 ou 3 colonnes)
     private int $columns = 1;
     private float $colGap = 16.0;
     private int $col = 0;
     private float $colTop = 0.0;
+    private float $regionMaxY = 0.0;   // profondeur maxi atteinte dans la région
+    private int $premiumCols = 2;      // colonnes de la section premium en cours
+    private float $balanceBottom = 0.0; // plancher d'équilibrage des colonnes (0 = plein bas de page)
 
     private const BODY_SIZE = 10.8;
     private const LEADING   = 15.4;
@@ -111,7 +114,6 @@ final class PdfComposer
             default    => ['body', 21.0, 'editorial'],
         };
         if ($theme === 'premium') {
-            $this->columns = 2;
             $this->bodySize = 9.4;     // densité magazine sur colonne étroite
             $this->leading = 13.2;
         }
@@ -267,6 +269,7 @@ final class PdfComposer
 
     private function composeBody(): void
     {
+        $premium = $this->opener === 'premium';
         foreach ($this->book['chapters'] as $chapter) {
             $this->runningRecto = $chapter['title'];
             if ($this->pageNum % 2 === 1) {
@@ -275,40 +278,179 @@ final class PdfComposer
             $this->newPage('opener');
             $this->chapterStarts[$chapter['num']] = $this->pageNum;
 
+            $this->columns = 1;
             $this->col = 0;
             $y = $this->chapterOpener($chapter);
             $this->colTop = $y;
+            $this->regionMaxY = $y;
             $this->drawFolio();
 
             $imagesPlaced = false;
             foreach ($chapter['sections'] as $sIndex => $section) {
+                $mode = $premium ? $this->premiumMode((int) $chapter['num'], $sIndex) : '';
+                if ($premium) {
+                    $this->premiumCols = $mode === 'trio' ? 3 : 2;
+                }
                 if ($sIndex > 0) {
-                    $y = $this->ensureRoom($y, 3 * $this->leading + 34);
-                    $y = $this->sectionHead($y, $section['title'], $sIndex);
+                    if ($premium) {
+                        $y = $this->endRegion($y);
+                        $y = $this->ensureRoom($y, 4 * $this->leading + 52);
+                        $y = $this->premiumSectionHead($y, $section['title'], $sIndex, $mode);
+                    } else {
+                        $y = $this->ensureRoom($y, 3 * $this->leading + 34);
+                        $y = $this->sectionHead($y, $section['title'], $sIndex);
+                    }
                 }
                 $blocks = !empty($section['blocks'])
                     ? $section['blocks']
                     : array_map(fn ($p) => ['t' => 'p', 'text' => $p], $section['paragraphs'] ?? []);
-                foreach ($blocks as $bIndex => $block) {
-                    if (($block['t'] ?? 'p') === 'call') {
-                        $y = $this->callout($y, (string) $block['kind'], (string) $block['text']);
-                    } elseif (($block['t'] ?? 'p') === 'list') {
-                        foreach ((array) $block['items'] as $item) {
-                            $y = $this->paragraph($y, '– ' . $item, false);
+
+                if ($premium) {
+                    $y = $this->premiumSection($y, $blocks, $sIndex);
+                } else {
+                    foreach ($blocks as $bIndex => $block) {
+                        $type = $block['t'] ?? 'p';
+                        if ($type === 'call') {
+                            $y = $this->callout($y, (string) $block['kind'], (string) $block['text']);
+                        } elseif ($type === 'h') {
+                            $y = $this->subHead($y, (string) $block['text']);
+                        } elseif ($type === 'list') {
+                            foreach ((array) $block['items'] as $item) {
+                                $y = $this->paragraph($y, '– ' . $item, false);
+                            }
+                            $y += 3;
+                        } else {
+                            $y = $this->paragraph($y, (string) $block['text'], $bIndex > 0 || $sIndex > 0);
                         }
-                        $y += 3;
-                    } else {
-                        $y = $this->paragraph($y, (string) $block['text'], $bIndex > 0 || $sIndex > 0);
                     }
                 }
                 if (!$imagesPlaced && !empty($chapter['images'])) {
                     $imagesPlaced = true;
                     foreach ($chapter['images'] as $image) {
                         $y = $this->figure($y, $chapter['num'], $image);
+                        if ($premium) {
+                            $y = $this->gridSnap($y);
+                        }
                     }
                 }
             }
+            if ($premium) {
+                $y = $this->endRegion($y);
+            }
         }
+    }
+
+    /**
+     * Rythme éditorial du thème premium : chaque section reçoit un des trois
+     * gabarits, décalé d'un chapitre à l'autre pour que deux chapitres
+     * successifs ne se ressemblent jamais.
+     *   feature → gros titre pleine largeur + 2 colonnes
+     *   duo     → pavé numéroté + 2 colonnes
+     *   trio    → titre filet + 3 colonnes serrées
+     */
+    private function premiumMode(int $chapterNum, int $sIndex): string
+    {
+        $modes = ['feature', 'duo', 'trio'];
+        return $modes[($chapterNum + $sIndex) % 3];
+    }
+
+    /**
+     * Corps d'une section premium : le contenu est découpé en segments —
+     * les chiffres clés et « à retenir » sortent en PLEINE LARGEUR, le reste
+     * coule en colonnes ÉQUILIBRÉES (hauteur mesurée puis répartie, comme le
+     * ferait un maquettiste, pour ne jamais laisser une colonne vide).
+     */
+    private function premiumSection(float $y, array $blocks, int $sIndex): float
+    {
+        $segments = [];
+        $flow = [];
+        foreach ($blocks as $block) {
+            if (($block['t'] ?? 'p') === 'call' && in_array((string) $block['kind'], ['chiffre', 'retenir'], true)) {
+                if ($flow) {
+                    $segments[] = ['flow', $flow];
+                    $flow = [];
+                }
+                $segments[] = ['full', $block];
+            } else {
+                $flow[] = $block;
+            }
+        }
+        if ($flow) {
+            $segments[] = ['flow', $flow];
+        }
+
+        $firstSegment = true;
+        foreach ($segments as $segment) {
+            if ($segment[0] === 'full') {
+                $y = $this->endRegion($y);
+                $y = (string) $segment[1]['kind'] === 'chiffre'
+                    ? $this->premiumStat($y, (string) $segment[1]['text'])
+                    : $this->premiumBand($y, (string) $segment[1]['kind'], (string) $segment[1]['text']);
+                $firstSegment = false;
+                continue;
+            }
+            $run = $segment[1];
+            // Chapeau : le tout premier paragraphe du chapitre, en grand
+            if ($firstSegment && $sIndex === 0 && ($run[0]['t'] ?? 'p') === 'p') {
+                $lead = array_shift($run);
+                $y = $this->premiumLead($y, (string) $lead['text']);
+            }
+            $firstSegment = false;
+            if (!$run) {
+                continue;
+            }
+            $y = $this->beginRegion($this->premiumCols, $y, $this->measureFlow($run));
+            foreach ($run as $fIndex => $block) {
+                $type = $block['t'] ?? 'p';
+                if ($type === 'call') {
+                    $y = $this->gridSnap($this->callout($y, (string) $block['kind'], (string) $block['text']));
+                } elseif ($type === 'h') {
+                    $y = $this->gridSnap($this->subHead($y, (string) $block['text']));
+                } elseif ($type === 'list') {
+                    foreach ((array) $block['items'] as $item) {
+                        $y = $this->paragraph($y, '– ' . $item, false);
+                    }
+                    $y = $this->gridSnap($y);
+                } else {
+                    $y = $this->paragraph($y, (string) $block['text'], $fIndex > 0);
+                }
+            }
+            $y = $this->endRegion($y);
+        }
+        return $y;
+    }
+
+    /** Hauteur estimée d'un flux de blocs composé en colonnes premium. */
+    private function measureFlow(array $blocks): float
+    {
+        $cols = $this->premiumCols;
+        $full = $this->textWidth();
+        $colW = $cols > 1 ? ($full - $this->colGap * ($cols - 1)) / $cols : $full;
+        [$size, $lead] = $cols >= 3 ? [8.6, 12.0] : [9.4, 13.2];
+        $h = 0.0;
+        foreach ($blocks as $block) {
+            $type = $block['t'] ?? 'p';
+            if ($type === 'call') {
+                $pad = 10.0;
+                $n = 0;
+                foreach (preg_split('/\n\s*\n/', trim((string) $block['text'])) ?: [] as $i => $paragraph) {
+                    if ($i > 0) {
+                        $n++;
+                    }
+                    $n += count($this->wrapText(trim($paragraph), 'body', 8.8, $colW - 2 * $pad));
+                }
+                $h += 30 + $n * 12.2 + $pad * 0.7 + 15;
+            } elseif ($type === 'h') {
+                $h += 29.0;
+            } elseif ($type === 'list') {
+                foreach ((array) ($block['items'] ?? []) as $item) {
+                    $h += count($this->justify('– ' . $item, 'body', $size, $colW, 0, 11.0)) * $lead;
+                }
+            } else {
+                $h += count($this->justify((string) $block['text'], 'body', $size, $colW, 13.0, 0)) * $lead;
+            }
+        }
+        return $h;
     }
 
     /** Ouverture de chapitre selon le thème. Retourne l'ordonnée du texte. */
@@ -354,29 +496,35 @@ final class PdfComposer
                 return $y + 30;
 
             case 'premium':
-                // Grand aplat de couleur, numéro géant en tinte, titre réversé,
-                // barre décalée sous le bloc — l'esprit brochure de magazine.
-                $bandH = max(168.0, $this->h * 0.265);
+                // Grand aplat de couleur, numéro géant en tinte, GROS titre
+                // réversé, barre décalée sous le bloc — alternée d'un chapitre
+                // à l'autre pour varier le rythme des ouvertures.
+                $bandH = max(172.0, $this->h * 0.27);
                 $fg = $this->reverseInk();
                 $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
                 if ($isChapter && $displayNum !== '') {
                     $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
-                    $numW = $this->pdf->width($numText, 'sans', 64);
-                    $this->pdf->text($this->w - $this->marginRight() - $numW, $bandH - 22, 'sans', 64, $numText, 0, 0, $this->accentMid());
+                    $numW = $this->pdf->width($numText, 'sans', 66);
+                    $this->pdf->text($this->w - $this->marginRight() - $numW, $bandH - 20, 'sans', 66, $numText, 0, 0, $this->accentMid());
                 }
                 $this->pdf->text($left, 46, 'label', 8, $label, 0, 2.6, $fg);
                 $this->pdf->rectRgb($left, 56, 26, 2.2, $fg);
-                $ty = 84.0;
-                foreach ($this->wrapText($chapter['title'], 'sans', 20, $width * 0.68) as $line) {
+                $ty = 88.0;
+                foreach ($this->wrapText($chapter['title'], 'sans', 22, $width * 0.66) as $line) {
                     if ($ty > $bandH - 14) {
                         break;
                     }
-                    $this->pdf->text($left, $ty, 'sans', 20, $line, 0, 0, $fg);
-                    $ty += 26;
+                    $this->pdf->text($left, $ty, 'sans', 22, $line, 0, 0, $fg);
+                    $ty += 28;
                 }
-                // Décalage : barre en tinte claire qui déborde du bloc
-                $this->pdf->rectRgb(0, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
-                return $bandH + 40;
+                // Décalage alterné : barre en tinte claire qui déborde du bloc
+                $flip = $isChapter && $displayNum !== '' && ((int) $displayNum % 2 === 0);
+                if ($flip) {
+                    $this->pdf->rectRgb($this->w * 0.56, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
+                } else {
+                    $this->pdf->rectRgb(0, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
+                }
+                return $bandH + 42;
 
             case 'centered':
                 // Composition centrée, filets fins
@@ -424,28 +572,165 @@ final class PdfComposer
             case 'centered':
                 $this->centerText($y + 3, 'display2', 12.5, $this->fitOneLine($title, 'display2', 12.5, $width * 0.9));
                 break;
-            case 'premium':
-                // Pavé numéroté façon sommaire de magazine
-                $sq = 15.0;
-                $this->pdf->rectRgb($left, $y - 8, $sq, $sq, $this->accent);
-                $numText = str_pad((string) max(1, $num), 2, '0', STR_PAD_LEFT);
-                $numW = $this->pdf->width($numText, 'label', 7);
-                $this->pdf->text($left + ($sq - $numW) / 2, $y + 2.5, 'label', 7, $numText, 0, 0, $this->reverseInk());
-                $titleW = $width - $sq - 8;
-                $lines = $this->wrapText($title, 'sans', 10.5, $titleW);
-                if (count($lines) > 2) {
-                    $lines = [$lines[0], $this->fitOneLine(implode(' ', array_slice($lines, 1)), 'sans', 10.5, $titleW)];
-                }
-                $ty = $y + 3;
-                foreach ($lines as $line) {
-                    $this->pdf->text($left + $sq + 8, $ty, 'sans', 10.5, $line);
-                    $ty += 13;
-                }
-                return max($y + 24, $ty + 11);
             default:
                 $this->pdf->text($left, $y + 3, 'body', 13, $this->fitOneLine($title, 'body', 13, $width));
         }
         return $y + 24;
+    }
+
+    /** Têtes de section premium : trois gabarits qui alternent. */
+    private function premiumSectionHead(float $y, string $title, int $num, string $mode): float
+    {
+        $left = $this->marginLeft();
+        $width = $this->textWidth();
+        $numText = str_pad((string) max(1, $num), 2, '0', STR_PAD_LEFT);
+        switch ($mode) {
+            case 'feature':
+                // GROS titre pleine largeur, barre accent entrant depuis le bord
+                $y += 16;
+                $this->pdf->rectRgb(0, $y - 7, max(10.0, $left - 9), 9, $this->accent);
+                $this->pdf->text($left, $y + 1, 'label', 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
+                $y += 26;
+                foreach ($this->wrapText($title, 'sans', 17, $width) as $line) {
+                    $this->pdf->text($left, $y, 'sans', 17, $line);
+                    $y += 22;
+                }
+                return $y + 8;
+
+            case 'trio':
+                // Titre compact + filet accent courant jusqu'à la marge
+                $y += 14;
+                $this->pdf->rectRgb($left, $y - 7.5, 8.5, 8.5, $this->accent);
+                $t = $this->fitOneLine($title, 'sans', 11.5, $width * 0.72);
+                $this->pdf->text($left + 15, $y + 0.5, 'sans', 11.5, $t);
+                $tEnd = $left + 15 + $this->pdf->width($t, 'sans', 11.5);
+                if ($tEnd + 14 < $left + $width) {
+                    $this->pdf->rectRgb($tEnd + 10, $y - 2.8, $left + $width - $tEnd - 10, 0.9, $this->accent);
+                }
+                return $y + 20;
+
+            default: // duo — pavé numéroté façon sommaire de magazine
+                $y += 12;
+                $sq = 15.0;
+                $this->pdf->rectRgb($left, $y - 8, $sq, $sq, $this->accent);
+                $numW = $this->pdf->width($numText, 'label', 7);
+                $this->pdf->text($left + ($sq - $numW) / 2, $y + 2.5, 'label', 7, $numText, 0, 0, $this->reverseInk());
+                $t = $this->fitOneLine($title, 'sans', 11.5, $width - $sq - 9);
+                $this->pdf->text($left + $sq + 9, $y + 2.5, 'sans', 11.5, $t);
+                return $y + 24;
+        }
+    }
+
+    /** Chapeau d'ouverture premium : grand corps pleine largeur, barre accent. */
+    private function premiumLead(float $y, string $text): float
+    {
+        $size = 11.8;
+        $lh = 16.6;
+        $width = $this->textWidth() - 16;
+        $lines = $this->justify($text, 'body', $size, $width, 0, 0);
+        $blockH = count($lines) * $lh;
+        if ($blockH > $this->h - $this->top - $this->bottom - 46) {
+            return $this->paragraph($y, $text, false);
+        }
+        $y = $this->ensureRoom($y, $blockH + 16);
+        $topY = $y;
+        foreach ($lines as $line) {
+            $this->pdf->text($this->marginLeft() + 16 + $line['x'], $y, 'body', $size, $line['text'], $line['tw']);
+            $y += $lh;
+        }
+        $barTop = $topY - $size * 0.76;
+        $this->pdf->rectRgb($this->marginLeft() + 2, $barTop, 3.4, ($y - $lh + 3.5) - $barTop, $this->accent);
+        return $y + 10;
+    }
+
+    /** Chiffre clé premium : GRAND nombre accent + commentaire en regard. */
+    private function premiumStat(float $y, string $text): float
+    {
+        if (!preg_match('/(\d[\d\x{202F}\x{00A0} ,.]*\d|\d)\s*([%€$])?/u', $text, $m)) {
+            return $this->callout($y, 'chiffre', $text);
+        }
+        $big = trim($m[1]) . (($m[2] ?? '') !== '' ? ' ' . $m[2] : '');
+        $left = $this->marginLeft();
+        $width = $this->textWidth();
+        $size = 44.0;
+        while ($size > 20 && $this->pdf->width($big, 'sans', $size) > $width * 0.44) {
+            $size *= 0.9;
+        }
+        $numW = $this->pdf->width($big, 'sans', $size);
+        $txtX = $left + max($numW, $width * 0.30) + 20;
+        $txtW = $left + $width - $txtX;
+        $lines = $this->wrapText($text, 'body', 9.4, $txtW);
+        $blockH = max($size + 30, 24 + count($lines) * 12.8);
+        if ($blockH > $this->h - $this->top - $this->bottom - 36) {
+            return $this->callout($y, 'chiffre', $text);
+        }
+        $y = $this->ensureRoom($y, $blockH + 20);
+        $y += 10;
+        $this->pdf->rectRgb($left, $y - 2, 30, 2.6, $this->accent);
+        $this->pdf->text($left, $y + 12, 'label', 7.2, 'CHIFFRE CLÉ', 0, 2.4, $this->accentDark());
+        $this->pdf->text($left, $y + 16 + $size * 0.92, 'sans', $size, $big, 0, 0, $this->accent);
+        $ty = $y + 16;
+        foreach ($lines as $line) {
+            $this->pdf->text($txtX, $ty, 'body', 9.4, $line);
+            $ty += 12.8;
+        }
+        return max($y + 20 + $size, $ty + 4) + 12;
+    }
+
+    /** « À retenir » premium : bandeau réversé PLEINE LARGEUR, bord à bord. */
+    private function premiumBand(float $y, string $kind, string $text): float
+    {
+        $labels = \App\Core\Util::CALLOUTS;
+        $label = mb_strtoupper($labels[$kind] ?? $kind);
+        $left = $this->marginLeft();
+        $width = $this->textWidth();
+        $pad = 14.0;
+        $lineH = 13.6;
+        $lines = [];
+        foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
+            if ($i > 0) {
+                $lines[] = '';
+            }
+            foreach ($this->wrapText(trim($paragraph), 'body', 9.8, $width - 2 * $pad) as $line) {
+                $lines[] = $line;
+            }
+        }
+        $boxH = 36 + count($lines) * $lineH + 8;
+        if ($boxH > $this->h - $this->top - $this->bottom - 36) {
+            return $this->callout($y, $kind, $text);
+        }
+        $y = $this->ensureRoom($y, $boxH + 18);
+        $y += 8;
+        $fg = $this->reverseInk();
+        $this->pdf->rectRgb(0, $y, $this->w, $boxH, $this->accent);
+        $ty = $y + $pad + 5;
+        $this->pdf->text($left + $pad, $ty, 'label', 7.4, $label, 0, 2.6, $fg);
+        $ty += 18;
+        foreach ($lines as $line) {
+            if ($line !== '') {
+                $this->pdf->text($left + $pad, $ty, 'body', 9.8, $line, 0, 0, $fg);
+            }
+            $ty += $lineH;
+        }
+        return $y + $boxH + 14;
+    }
+
+    /** Sous-titre intra-section (bloc « h » : ancien ### markdown). */
+    private function subHead(float $y, string $title): float
+    {
+        $y = $this->ensureRoom($y, 2 * $this->leading + 20);
+        $y += 9;
+        $left = $this->colX();
+        $width = $this->colWidth();
+        $font = in_array($this->opener, ['number', 'band', 'premium'], true) ? 'sans' : 'body';
+        $size = $this->opener === 'premium' ? 10.0 : 11.0;
+        $this->pdf->text($left, $y + 3, $font, $size, $this->fitOneLine($title, $font, $size, $width));
+        if ($this->opener === 'premium') {
+            $this->pdf->rectRgb($left, $y + 8.5, 17, 1.8, $this->accent);
+        } elseif ($this->opener === 'editorial') {
+            $this->pdf->rectRgb($left, $y + 8.5, 17, 1.2, $this->accent);
+        }
+        return $y + 20;
     }
 
     /** Écrit un paragraphe justifié, avec coupure de colonne/page automatique. */
@@ -457,14 +742,18 @@ final class PdfComposer
         $lines = $this->justify($text, 'body', $this->bodySize, $width, $indentPt, $isList ? 11.0 : 0.0);
 
         foreach ($lines as $line) {
-            if ($y > $this->h - $this->bottom - 4) {
+            if ($y > $this->colBottom() - 4) {
                 $y = $this->breakColumn();
             }
             $x = $this->colX() + $line['x'];
             $this->pdf->text($x, $y, 'body', $this->bodySize, $line['text'], $line['tw']);
             $y += $this->leading;
         }
-        return $y + 4.5;
+        // En colonnes premium : aucun blanc entre paragraphes (l'alinéa suffit),
+        // la grille de lignes de base reste donc parfaitement alignée.
+        $gap = ($this->opener === 'premium' && $this->columns > 1) ? 0.0 : 4.5;
+        $this->regionMaxY = max($this->regionMaxY, $y);
+        return $y + $gap;
     }
 
     /** Encadré éditorial : boîte teintée accent, étiquette, texte sans-serif. */
@@ -524,6 +813,7 @@ final class PdfComposer
             }
             $ty += $lineH;
         }
+        $this->regionMaxY = max($this->regionMaxY, $y + $boxH + 11);
         return $y + $boxH + 11;
     }
 
@@ -551,6 +841,7 @@ final class PdfComposer
         $y += $height + 14;
         $caption = 'Fig. ' . $chapterNum . '.' . $image['slot'] . ' — ' . ($image['caption'] ?: 'Visuel');
         $this->pdf->text($left, $y, 'italic', 9, $this->fitOneLine($caption, 'italic', 9, $width), 0, 0, $this->gray);
+        $this->regionMaxY = max($this->regionMaxY, $y + 18);
         return $y + 18;
     }
 
@@ -617,7 +908,7 @@ final class PdfComposer
 
     private function ensureRoom(float $y, float $needed): float
     {
-        if ($y + $needed > $this->h - $this->bottom) {
+        if ($y + $needed > $this->colBottom()) {
             return $this->breakColumn();
         }
         return $y;
@@ -627,13 +918,82 @@ final class PdfComposer
     private function breakColumn(): float
     {
         if ($this->col < $this->columns - 1) {
+            // Profondeur atteinte par la colonne close : son plancher réel
+            $this->regionMaxY = max($this->regionMaxY, $this->colBottom());
             $this->col++;
             return $this->colTop;
         }
         $this->col = 0;
         $this->newPage();
         $this->colTop = $this->top + 16;
+        $this->regionMaxY = $this->colTop;
+        $this->balanceBottom = 0.0;   // au-delà d'une page : colonnes pleines
         return $this->colTop;
+    }
+
+    /**
+     * Ouvre une région de composition à N colonnes à partir de l'ordonnée
+     * donnée ; le corps et l'interligne s'adaptent à l'étroitesse des colonnes.
+     */
+    private function beginRegion(int $cols, float $y, float $contentH = 0.0): float
+    {
+        $this->columns = max(1, $cols);
+        $this->col = 0;
+        $this->colTop = $y;
+        $this->regionMaxY = $y;
+        [$this->bodySize, $this->leading] = match (true) {
+            $this->columns >= 3 => [8.6, 12.0],
+            $this->columns === 2 => [9.4, 13.2],
+            default => [10.2, 14.4],
+        };
+        // Équilibrage : si le contenu tient dans la page, chaque colonne reçoit
+        // la même hauteur au lieu de tout empiler dans la première.
+        $this->balanceBottom = 0.0;
+        if ($this->columns > 1 && $contentH > 0) {
+            $perCol = $contentH / $this->columns + $this->leading * 1.5;
+            if ($y + $perCol < $this->h - $this->bottom - $this->leading) {
+                $this->balanceBottom = $y + $perCol;
+            }
+        }
+        return $y;
+    }
+
+    /**
+     * Referme la région : repasse en pleine largeur SOUS la colonne la plus
+     * profonde, pour que l'élément suivant reparte aligné bord à bord.
+     */
+    private function endRegion(float $y): float
+    {
+        $y = max($y, $this->regionMaxY);
+        $this->columns = 1;
+        $this->col = 0;
+        $this->colTop = $this->top + 16;
+        $this->regionMaxY = $y;
+        $this->balanceBottom = 0.0;
+        [$this->bodySize, $this->leading] = [10.2, 14.4];
+        return $y;
+    }
+
+    /** Plancher de la colonne courante (équilibré, sauf pour la dernière). */
+    private function colBottom(): float
+    {
+        if ($this->balanceBottom > 0 && $this->col < $this->columns - 1) {
+            return $this->balanceBottom;
+        }
+        return $this->h - $this->bottom;
+    }
+
+    /**
+     * Aligne l'ordonnée sur la grille de lignes de base de la région : les
+     * colonnes voisines et les pages successives retombent sur le même rythme.
+     */
+    private function gridSnap(float $y): float
+    {
+        if ($this->columns <= 1) {
+            return $y;
+        }
+        $n = max(0, (int) ceil(($y - $this->colTop) / $this->leading - 0.001));
+        return $this->colTop + $n * $this->leading;
     }
 
     private function colWidth(): float

@@ -122,6 +122,12 @@ final class Util
 
         foreach ($lines as $line) {
             $trimmed = trim($line);
+            // Sous-titre markdown résiduel (## à ####) : bloc typé, jamais du texte brut
+            if ($callout === null && preg_match('/^#{2,4}\s+(.+)$/u', $trimmed, $m)) {
+                $flush();
+                $blocks[] = ['t' => 'h', 'text' => trim($m[1], " \t#")];
+                continue;
+            }
             if ($callout === null && preg_match('/^:::\s*([a-zé]+)\s*$/u', $trimmed, $m)
                 && isset(self::CALLOUTS[$m[1]])) {
                 $flush();

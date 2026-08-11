@@ -526,53 +526,11 @@ final class CoverStudio
         // Tranche : aplat STRICTEMENT uni couvrant tout l'espace entre les deux
         // faces (les arrondis mm→px ne peuvent laisser ni jour ni chevauchement),
         // dessiné APRÈS les faces pour que rien ne déborde dans cette zone.
-        // Titre/auteur verticaux si assez épaisse (règle KDP ≈ 6,35 mm).
+        // AUCUN texte n'est peint ici : le titre et l'auteur de la tranche sont
+        // ajoutés en VECTORIEL par-dessus dans le PDF final (export/cover-pdf),
+        // pour une netteté parfaite et zéro résidu qui dépasse de l'aplat.
         $spineX = $panelW;
         imagefilledrectangle($wrap, $spineX, 0, max($spineX + $spineW, $frontX) - 1, $totalH, $spineBg);
-        if ($spine >= 6.35) {
-            $c3 = self::alloc($wrap, self::spineTextHex($spineHex, $palette));
-            $label = trim((string) ($texts['title'] ?? ''));
-            $author = mb_strtoupper(trim((string) ($texts['author'] ?? '')));
-            $font = self::fontFile('instrument-serif');
-            $fontA = self::fontFile('plex-mono');
-            $margin = $mmToPx(14.0);           // marge haute/basse de la tranche
-            $gap = $mmToPx(8.0);
-            $available = $totalH - 2 * $margin;
-
-            // Réduction automatique jusqu'à ce que titre (+ auteur) tiennent
-            $size = (int) max(14, min($spineW * 0.42, 60));
-            $fit = function (int $s) use ($font, $fontA, $label, $author, $gap): array {
-                $box = imagettfbbox($s, 0, $font, $label);
-                $titleW = abs($box[2] - $box[0]);
-                $authorW = 0;
-                if ($author !== '') {
-                    $boxA = imagettfbbox((int) max(10, $s * 0.5), 0, $fontA, $author);
-                    $authorW = abs($boxA[2] - $boxA[0]) + $gap;
-                }
-                return [$titleW, $authorW];
-            };
-            [$titleW, $authorW] = $fit($size);
-            while ($size > 14 && $titleW + $authorW > $available) {
-                $size = (int) ($size * 0.93);
-                [$titleW, $authorW] = $fit($size);
-            }
-            // Toujours trop long : on abandonne l'auteur, puis on tronque le titre
-            if ($titleW + $authorW > $available && $author !== '') {
-                $author = '';
-                [$titleW, $authorW] = $fit($size);
-            }
-            while ($titleW > $available && mb_strlen($label) > 8) {
-                $label = rtrim(mb_substr($label, 0, -2)) . '…';
-                [$titleW, $authorW] = $fit($size);
-            }
-
-            $ty = (int) (($totalH - ($titleW + $authorW)) / 2);
-            imagettftext($wrap, $size, -90, $spineX + (int) ($spineW * 0.62), $ty, $c3, $font, $label);
-            if ($author !== '') {
-                $sizeA = (int) max(10, $size * 0.5);
-                imagettftext($wrap, $sizeA, -90, $spineX + (int) ($spineW * 0.56), $ty + $titleW + $gap, $c3, $fontA, $author);
-            }
-        }
 
         // Zone code-barres KDP : blanc, 50,8 × 30,5 mm, à 6,35 mm des bords de coupe de la 4ème
         $white = imagecolorallocate($wrap, 255, 255, 255);

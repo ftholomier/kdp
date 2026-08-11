@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c14';
+  const BUILD = '2026-08-11 · c15';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -82,6 +82,11 @@
     };
     for (const line of lines) {
       const trimmed = line.trim();
+      if (!callout && /^#{2,4}\s+/.test(trimmed)) {
+        flush();
+        blocks.push({ t: 'h', text: trimmed.replace(/^#{2,4}\s+/, '').replace(/\s*#+\s*$/, '').trim() });
+        continue;
+      }
       const open = trimmed.match(/^:::\s*([a-zé]+)\s*$/);
       if (!callout && open && CALLOUT_LABELS[open[1]]) {
         flush();
@@ -115,6 +120,9 @@
       }
       if (block.t === 'list') {
         return `<ul class="reader-list">${block.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+      }
+      if (block.t === 'h') {
+        return `<h4 class="reader-subhead">${esc(block.text)}</h4>`;
       }
       return `<p>${esc(block.text)}</p>`;
     }).join('');

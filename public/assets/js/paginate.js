@@ -112,6 +112,10 @@
               `<div class="prose"><ul class="book-list">${block.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`, true);
             return;
           }
+          if (block.t === 'h') {
+            content = appendBlock(content, `<div class="prose"><h4 class="book-subhead">${esc(block.text)}</h4></div>`, true);
+            return;
+          }
           const cls = firstParagraphOfChapter ? 'dropcap' : (blockIndex === 0 && sectionIndex > 0 ? '' : 'indent');
           content = appendParagraph(content, block.text, cls);
           firstParagraphOfChapter = false;

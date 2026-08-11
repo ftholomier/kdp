@@ -129,6 +129,7 @@ h2.section-title {
   color: #26241E; text-align: left; margin: 0 0 3pt; text-indent: 0; hyphens: none;
 }
 .callout p:last-child { margin-bottom: 0; }
+.prose h4.book-subhead { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 11.5pt; margin: 8pt 0 4pt; }
 .prose ul.book-list { margin: 4pt 0 6pt; padding-left: 11pt; }
 .prose ul.book-list li {
   font-family: 'Instrument Serif', serif; font-size: 11.2pt; line-height: 1.42;

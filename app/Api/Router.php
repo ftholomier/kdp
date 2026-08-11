@@ -473,8 +473,9 @@ final class Router
                         [$titleW, $authorW] = $measure($size);
                     }
 
-                    // Ligne de base centrée dans l'épaisseur du dos (capitale ≈ 0,7 × corps)
-                    $ty = ($pageH - ($titleW + $authorW)) / 2;
+                    // Ligne de base centrée dans l'épaisseur du dos (capitale ≈ 0,7 × corps),
+                    // jamais au-dessus de la marge haute (titres très longs)
+                    $ty = max($margin, ($pageH - ($titleW + $authorW)) / 2);
                     $pdf->vtext($spineX + $spineWpt / 2 - $size * 0.34, $ty, 'spineT', $size, $label, 0, $fg);
                     if ($author !== '') {
                         $sizeA = max(6.5, $size * 0.55);

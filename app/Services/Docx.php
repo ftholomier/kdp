@@ -54,6 +54,8 @@ final class Docx
                             $body .= self::p($e(trim($paragraph)), ['size' => 22, 'after' => 80, 'shd' => 'F6F1E4']);
                         }
                         $body .= self::p('', ['size' => 6, 'after' => 160]);
+                    } elseif ($type === 'h') {
+                        $body .= self::p($e((string) $block['text']), ['size' => 26, 'bold' => true, 'before' => 200, 'after' => 100]);
                     } elseif ($type === 'list') {
                         foreach ((array) ($block['items'] ?? []) as $item) {
                             $body .= self::p($e('– ' . $item), ['size' => 24, 'after' => 80]);

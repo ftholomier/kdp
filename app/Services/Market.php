@@ -50,6 +50,10 @@ SPEC;
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
             'system'      => "Tu produis des analyses marché fiables et actuelles pour Amazon.fr. Réponse en français.",
+            // Appel INTERACTIF : borné sous les ~100 s des passerelles (Cloudflare
+            // renvoie 524 au-delà) — mieux vaut une erreur nette qu'un faux échec.
+            'timeout'     => 45,
+            'retries'     => 1,
         ]);
 
         return ['themes' => self::store((int) $project['id'], 'analysis', $data), 'grounded' => $grounded];
@@ -127,6 +131,8 @@ SPEC;
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
             'system'      => "Tu produis des analyses marché fiables et actuelles pour Amazon.fr. Réponse en français.",
+            'timeout'     => 45,
+            'retries'     => 1,
         ]);
 
         return ['themes' => self::store((int) $project['id'], 'trends', $data), 'grounded' => false];

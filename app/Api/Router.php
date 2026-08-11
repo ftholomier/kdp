@@ -702,6 +702,13 @@ final class Router
                 Canopy::resetUsage();
                 Http::ok(['canopy' => Canopy::status()]);
 
+            case 'canopy/calibrate':
+                // Cale le compteur local sur le chiffre RÉEL lu par l'utilisateur
+                // sur son tableau de bord canopyapi.co.
+                Http::requirePost();
+                Canopy::setUsage(max(0, (int) Http::in('used', 0)));
+                Http::ok(['canopy' => Canopy::status()]);
+
             case 'gemini/test':
                 Http::requirePost();
                 // Échec rapide : pas de relance, timeout court, budget large

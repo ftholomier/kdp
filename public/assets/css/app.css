@@ -423,6 +423,13 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .reader-callout.k-exemple   { border-left-color: #8A4B6B;       background: #F5EEF2; }
 .reader-callout.k-faq       { border-left-color: var(--navy);   background: var(--bg); }
 .reader-callout.k-attention { border-left-color: #A03D2E;       background: #FAECE8; }
+.watch-item { display: flex; gap: 8px; padding: 5px 0; font-size: 12.5px; line-height: 1.4; color: inherit; text-decoration: none; border-radius: 6px; }
+.watch-item:hover { background: #F6F1E4; }
+.watch-item:hover .ttl { color: var(--accent); }
+.watch-item .num { color: var(--fainter); flex: none; font-size: 11px; padding-top: 1px; width: 16px; }
+.watch-item .ttl { flex: 1; min-width: 0; }
+.watch-item .prix { flex: none; color: var(--muted); font-size: 11.5px; text-align: right; line-height: 1.35; }
+.watch-item .note { color: var(--fainter); font-size: 10px; }
 .toc-request { margin-top: 18px; padding: 16px 18px; border-top: 1px dashed var(--line); }
 .toc-request .t { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .toc-request .row { display: flex; gap: 10px; }

@@ -458,6 +458,16 @@ final class Canopy
         @file_put_contents(self::usageFile(), json_encode([date('Y-m') => 0]));
     }
 
+    /**
+     * CALE le compteur local sur le chiffre réel lu sur canopyapi.co :
+     * l'estimation repart de ce point exact (l'écrasement efface aussi un
+     * éventuel relevé d'en-têtes périmé).
+     */
+    public static function setUsage(int $used): void
+    {
+        @file_put_contents(self::usageFile(), json_encode([date('Y-m') => max(0, $used)]));
+    }
+
     private static function usageFile(): string
     {
         return self::cacheDir() . '/canopy-usage.json';

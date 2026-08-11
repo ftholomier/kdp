@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c16';
+  const BUILD = '2026-08-11 · c17';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -298,8 +298,12 @@
           ${canopy.enabled ? `
           <div class="mono" style="font-size:26px; margin-top:6px;">${remaining}<span style="font-size:14px; color:var(--faint);"> / ${canopy.budget}</span></div>
           <div class="demand-track" style="margin-top:8px;"><div class="demand-fill" style="width:${Math.min(100, Math.round(canopy.used / canopy.budget * 100))}%; background:${canopy.exhausted ? 'var(--accent)' : 'var(--navy)'};"></div></div>
-          <div style="font-size:11.5px; color:var(--faint); margin-top:6px;">${canopy.used} utilisée${canopy.used > 1 ? 's' : ''}${canopy.exhausted ? ' · quota atteint' : ''} · ${canopy.real ? '<span style="color:var(--green);">en direct depuis Canopy</span>' : '<span>estimation locale · <span style="color:var(--accent); cursor:pointer;" onclick="App.resetCanopyUsage()">réinitialiser</span></span>'}</div>
-          <div style="font-size:10.5px; color:var(--fainter); margin-top:4px;">${canopy.real ? 'Synchronisé avec votre compte canopyapi.co' : 'Réf. exacte : votre tableau de bord canopyapi.co'}</div>`
+          <div style="font-size:11.5px; color:var(--faint); margin-top:6px;">${canopy.used} utilisée${canopy.used > 1 ? 's' : ''}${canopy.exhausted ? ' · quota atteint' : ''} · ${canopy.real ? '<span style="color:var(--green);">en direct depuis Canopy</span>' : '<span>estimation locale</span>'}</div>
+          ${canopy.real ? '<div style="font-size:10.5px; color:var(--fainter); margin-top:4px;">Synchronisé avec votre compte canopyapi.co</div>' : `
+          <div style="font-size:10.5px; color:var(--fainter); margin-top:4px;">
+            <span style="color:var(--accent); cursor:pointer;" onclick="App.calibrateCanopy()">⚙ Caler sur mon vrai compteur canopyapi.co</span>
+            · <span style="cursor:pointer;" onclick="App.resetCanopyUsage()">remettre à zéro</span>
+          </div>`}`
           : `<div style="font-size:13px; color:var(--muted); margin-top:8px; line-height:1.5;">Connecteur non configuré.<br><span style="color:var(--accent); cursor:pointer;" onclick="App.openConnectors()">Coller ma clé Canopy ›</span></div>`}
         </div>
       </div>
@@ -319,6 +323,13 @@
       </div>
     </div>
     ${S.modal || ''}`;
+  }
+
+  // Lien produit Amazon : URL Canopy si fournie, sinon construite via l'ASIN
+  function amazonUrl(p, canopy) {
+    if (p.url) return p.url;
+    const tld = ({ FR: 'fr', COM: 'com', CO_UK: 'co.uk', UK: 'co.uk', DE: 'de', ES: 'es', IT: 'it', CA: 'ca' })[(canopy && canopy.domain) || 'FR'] || 'fr';
+    return p.asin ? `https://www.amazon.${tld}/dp/${p.asin}` : `https://www.amazon.${tld}/`;
   }
 
   function watchCardView(w, canopy) {
@@ -347,13 +358,13 @@
         <div><div class="metric-label">Avis cumulés</div><div class="metric-value">${nf(s.total_reviews)} ${deltaBadge(dReviews, ' %')}</div></div>
       </div>
       <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line-soft);">
-        <div class="metric-label" style="margin-bottom:7px;">Top réel (page 1)</div>
-        ${(s.top || []).slice(0, 5).map((p, i) => `
-        <div style="display:flex; gap:8px; padding:4px 0; font-size:12.5px; line-height:1.35;">
-          <span class="mono" style="color:var(--fainter); flex:none; font-size:11px; padding-top:1px;">${i + 1}</span>
-          <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.title)}">${esc(p.title)}</span>
-          <span class="mono" style="flex:none; color:var(--muted); font-size:11.5px;">${p.price !== null ? String(p.price.toFixed(2)).replace('.', ',') + ' €' : '—'}</span>
-        </div>`).join('')}
+        <div class="metric-label" style="margin-bottom:7px;">Top réel (page 1) — ${(s.top || []).length} titres, cliquez pour ouvrir sur Amazon</div>
+        ${(s.top || []).map((p, i) => `
+        <a class="watch-item" href="${esc(amazonUrl(p, canopy))}" target="_blank" rel="noopener">
+          <span class="mono num">${i + 1}</span>
+          <span class="ttl">${esc(p.title)}</span>
+          <span class="mono prix">${p.price !== null ? String(p.price.toFixed(2)).replace('.', ',') + ' €' : '—'}${p.rating ? '<br><span class="note">' + p.rating + '★ · ' + nf(p.ratings_total || 0) + '</span>' : ''}</span>
+        </a>`).join('')}
       </div>` : `
       <p class="why" style="color:var(--faint);">Cliquez « Relever » pour charger le top réel Amazon de cette niche (1 crédit).</p>`}
       <div style="display:flex; gap:8px; margin-top:16px;">
@@ -2317,9 +2328,38 @@
         S.watchCanopy = data.canopy;
         if (S.app.canopy) S.app.canopy = data.canopy;
         toast('Relevé enregistré.');
-      } catch (e) { toast(e.message, true); }
+      } catch (e) {
+        // Erreur passerelle (524/502…) : le serveur a pu terminer quand même —
+        // on recharge la liste pour récupérer un relevé enregistré tardivement.
+        toast(e.message + ' — vérification du relevé…', true);
+        try {
+          const data = await Api.get('watch/list');
+          S.watches = data.watches;
+          S.watchCanopy = data.canopy;
+          const fresh = (data.watches || []).find(x => x.id === watchId);
+          if (fresh && fresh.snapshot) toast('Bonne nouvelle : le relevé a bien été enregistré malgré l\'erreur.');
+        } catch (_) {}
+      }
       S.busy['watch' + watchId] = false;
       render();
+    },
+
+    async calibrateCanopy() {
+      const canopy = S.watchCanopy || S.app.canopy || {};
+      const value = prompt(
+        'Calage du compteur : combien de requêtes votre tableau de bord canopyapi.co affiche-t-il comme UTILISÉES ce mois-ci ?',
+        String(canopy.used || 0)
+      );
+      if (value === null) return;
+      const used = parseInt(value, 10);
+      if (isNaN(used) || used < 0) { toast('Saisissez un nombre entier (ex. : 4).', true); return; }
+      try {
+        const data = await Api.post('canopy/calibrate', { used });
+        S.watchCanopy = data.canopy;
+        if (S.app.canopy) S.app.canopy = data.canopy;
+        render();
+        toast('Compteur calé sur ' + used + ' — il suivra désormais depuis ce point.');
+      } catch (e) { toast(e.message, true); }
     },
 
     async watchToBook(watchId) {

@@ -139,14 +139,15 @@ final class PdfComposer
         $y = $this->top + 90;
         $left = $this->marginLeft();
         $right = $this->w - $this->marginRight();
-        foreach ($this->book['chapters'] as $index => $chapter) {
+        foreach ($this->book['chapters'] as $chapter) {
             if ($y > $this->h - $this->bottom - 20) {
                 $this->newPage();
                 $y = $this->top + 30;
                 $left = $this->marginLeft();
                 $right = $this->w - $this->marginRight();
             }
-            $label = ($index + 1) . '.  ' . $chapter['title'];
+            $label = (($chapter['role'] ?? 'chapter') === 'chapter' ? ($chapter['display_num'] ?? $chapter['num']) . '.  ' : '')
+                . $chapter['title'];
             $pageLabel = (string) ($this->chapterStarts[$chapter['num']] ?? '');
             $this->pdf->text($left, $y, 'Times-Roman', 11.5, $this->truncate($label, 'Times-Roman', 11.5, $right - $left - 40));
             $this->pdf->text($right - $this->pdf->width($pageLabel, 'Times-Roman', 11.5), $y, 'Times-Roman', 11.5, $pageLabel);
@@ -171,7 +172,7 @@ final class PdfComposer
             $width = $this->textWidth();
             $y = $this->top + 46;
 
-            $this->pdf->text($left, $y, 'Helvetica', 8.5, mb_strtoupper('Chapitre ' . $chapter['num']), 0, 2.2);
+            $this->pdf->text($left, $y, 'Helvetica', 8.5, mb_strtoupper((string) ($chapter['label'] ?? 'Chapitre ' . $chapter['num'])), 0, 2.2);
             $y += 26;
             foreach ($this->wrap($chapter['title'], 'Times-Roman', 21, $width) as $line) {
                 $this->pdf->text($left, $y, 'Times-Roman', 21, $line);
@@ -188,8 +189,19 @@ final class PdfComposer
                     $this->pdf->text($this->marginLeft(), $y, 'Times-Bold', 12.5, $this->truncate($section['title'], 'Times-Bold', 12.5, $this->textWidth()));
                     $y += 22;
                 }
-                foreach ($section['paragraphs'] as $pIndex => $paragraph) {
-                    $y = $this->paragraph($y, $paragraph, $pIndex > 0 || $sIndex > 0);
+                $blocks = !empty($section['blocks'])
+                    ? $section['blocks']
+                    : array_map(fn ($p) => ['t' => 'p', 'text' => $p], $section['paragraphs'] ?? []);
+                foreach ($blocks as $bIndex => $block) {
+                    if (($block['t'] ?? 'p') === 'call') {
+                        $y = $this->callout($y, (string) $block['kind'], (string) $block['text']);
+                    } elseif (($block['t'] ?? 'p') === 'list') {
+                        foreach ((array) $block['items'] as $item) {
+                            $y = $this->paragraph($y, '– ' . $item, false);
+                        }
+                    } else {
+                        $y = $this->paragraph($y, (string) $block['text'], $bIndex > 0 || $sIndex > 0);
+                    }
                 }
                 if (!$imagesPlaced && !empty($chapter['images'])) {
                     $imagesPlaced = true;
@@ -219,6 +231,50 @@ final class PdfComposer
             $y += self::LEADING;
         }
         return $y + 5;
+    }
+
+    /** Encadré éditorial : boîte flat avec filet, étiquette et texte. */
+    private function callout(float $y, string $kind, string $text): float
+    {
+        $labels = \App\Core\Util::CALLOUTS;
+        $label = mb_strtoupper($labels[$kind] ?? $kind);
+        $width = $this->textWidth();
+        $pad = 12.0;
+        $innerW = $width - 2 * $pad - 6;
+
+        // Pré-calcul de la hauteur (paragraphes du texte, police Helvetica 9.5)
+        $lines = [];
+        foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
+            if ($i > 0) {
+                $lines[] = '';
+            }
+            foreach ($this->wrap(trim($paragraph), 'Helvetica', 9.5, $innerW) as $line) {
+                $lines[] = $line;
+            }
+        }
+        $lineH = 13.2;
+        $boxH = 14 + 14 + count($lines) * $lineH + $pad;
+
+        // Trop haut pour tenir sur une page : repli en texte simple préfixé
+        if ($boxH > $this->h - $this->top - $this->bottom - 20) {
+            return $this->paragraph($y, ($labels[$kind] ?? $kind) . ' — ' . str_replace("\n", ' ', $text), false);
+        }
+        $y = $this->ensureRoom($y, $boxH + 10);
+        $y += 4;
+
+        $left = $this->marginLeft();
+        $this->pdf->rect($left, $y, $width, $boxH, 0.945);        // fond
+        $this->pdf->rect($left, $y, 3.2, $boxH, 0.30);            // filet gauche
+        $ty = $y + $pad + 2;
+        $this->pdf->text($left + $pad + 6, $ty, 'Helvetica', 7.5, $label, 0, 1.8);
+        $ty += 16;
+        foreach ($lines as $line) {
+            if ($line !== '') {
+                $this->pdf->text($left + $pad + 6, $ty, 'Helvetica', 9.5, $line);
+            }
+            $ty += $lineH;
+        }
+        return $y + $boxH + 10;
     }
 
     /** Emplacement visuel : image JPEG incorporée ou cadre réservé légendé. */

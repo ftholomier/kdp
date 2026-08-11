@@ -109,17 +109,27 @@ final class Toc
         $perChapter = (int) round($wordsTotal / count($toc));
         $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
 
+        \App\Core\Migrations::run();
         $pdo = Db::pdo();
         $pdo->beginTransaction();
         try {
             Db::run('DELETE FROM chapters WHERE project_id = ?', [$projectId]);
             Db::run('DELETE FROM images WHERE project_id = ?', [$projectId]);
 
+            // Introduction (belle page avant le chapitre 1)
+            $introId = Db::insert(
+                "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
+                [$projectId, 1, 'intro', 'Introduction', (int) round($perChapter * 0.6)]
+            );
+            foreach (['Ce que ce livre va changer pour vous', 'Comment tirer le meilleur de ce livre'] as $s => $title) {
+                Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$introId, $s + 1, $title]);
+            }
+
             foreach ($toc as $index => $chapter) {
-                $num = $index + 1;
+                $num = $index + 2; // décalé d'un cran par l'introduction
                 $chapterId = Db::insert(
-                    'INSERT INTO chapters (project_id, num, title, target_words, status) VALUES (?,?,?,?,\'wait\')',
-                    [$projectId, $num, $chapter['title'], $perChapter]
+                    "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
+                    [$projectId, $num, 'chapter', $chapter['title'], $perChapter]
                 );
                 $parts = $chapter['parts'] ?? [];
                 for ($s = 1; $s <= $sectionsPer; $s++) {
@@ -141,6 +151,15 @@ final class Toc
                 }
             }
 
+            // Conclusion (synthèse + plan d'action)
+            $conclusionId = Db::insert(
+                "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
+                [$projectId, count($toc) + 2, 'conclusion', 'Conclusion', (int) round($perChapter * 0.5)]
+            );
+            foreach (["L'essentiel à emporter", 'Votre plan d\'action'] as $s => $title) {
+                Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$conclusionId, $s + 1, $title]);
+            }
+
             Db::run(
                 "UPDATE projects SET writing_status = 'idle', step = GREATEST(step, 4), updated_at = ? WHERE id = ?",
                 [Db::now(), $projectId]
@@ -151,7 +170,7 @@ final class Toc
             throw $e;
         }
 
-        Util::journal($projectId, 'ok', 'Sommaire validé : ' . count($toc) . ' chapitres, ' . Util::nf($wordsTotal) . ' mots visés');
+        Util::journal($projectId, 'ok', 'Sommaire validé : introduction + ' . count($toc) . ' chapitres + conclusion, ' . Util::nf($wordsTotal) . ' mots visés');
     }
 
     public static function imageSpec(array $project): string

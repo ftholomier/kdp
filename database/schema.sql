@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
     project_id   INT UNSIGNED NOT NULL,
     num          TINYINT UNSIGNED NOT NULL,
+    role         ENUM('chapter','intro','conclusion') NOT NULL DEFAULT 'chapter',
     title        VARCHAR(255) NOT NULL,
     target_words INT UNSIGNED NOT NULL DEFAULT 0,
     status       ENUM('wait','writing','done') NOT NULL DEFAULT 'wait',

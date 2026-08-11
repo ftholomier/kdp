@@ -652,7 +652,7 @@ final class Router
 
     private static function project(int $id, int $userId): array
     {
-        \App\Services\Layout::ensureFinalPagesColumn();
+        \App\Core\Migrations::run();
         $project = Db::one('SELECT * FROM projects WHERE id = ? AND user_id = ?', [$id, $userId]);
         if (!$project) {
             Http::error('Projet introuvable.', 404);

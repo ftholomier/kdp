@@ -33,16 +33,35 @@ final class Docx
         $body .= self::p($e('© ' . $book['year'] . ' ' . $book['author'] . '. Tous droits réservés.'), ['size' => 18]);
         $body .= self::p($e('Publié en autoédition via Amazon Kindle Direct Publishing.'), ['size' => 18]);
 
+        $calloutLabels = \App\Core\Util::CALLOUTS;
         foreach ($book['chapters'] as $chapter) {
             $body .= '<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>';
-            $body .= self::p($e('Chapitre ' . $chapter['num']), ['size' => 20, 'caps' => true, 'color' => '888888']);
+            $body .= self::p($e($chapter['label'] ?? ('Chapitre ' . $chapter['num'])), ['size' => 20, 'caps' => true, 'color' => '888888']);
             $body .= self::p($e($chapter['title']), ['size' => 40, 'bold' => true, 'after' => 480, 'style' => 'Heading1']);
             foreach ($chapter['sections'] as $index => $section) {
                 if ($index > 0) {
                     $body .= self::p($e($section['title']), ['size' => 26, 'bold' => true, 'before' => 360, 'after' => 200, 'style' => 'Heading2']);
                 }
-                foreach ($section['paragraphs'] as $paragraph) {
-                    $body .= self::p($e($paragraph), ['size' => 24, 'justify' => true, 'after' => 200]);
+                $blocks = !empty($section['blocks'])
+                    ? $section['blocks']
+                    : array_map(fn ($p) => ['t' => 'p', 'text' => $p], $section['paragraphs'] ?? []);
+                foreach ($blocks as $block) {
+                    $type = $block['t'] ?? 'p';
+                    if ($type === 'call') {
+                        $label = $calloutLabels[$block['kind'] ?? ''] ?? 'Encadré';
+                        $body .= self::p($e(mb_strtoupper($label)), ['size' => 17, 'bold' => true, 'caps' => true, 'color' => '8A5A2A', 'before' => 240, 'after' => 60, 'shd' => 'F6F1E4']);
+                        foreach (preg_split('/\n\s*\n/', (string) $block['text']) ?: [] as $paragraph) {
+                            $body .= self::p($e(trim($paragraph)), ['size' => 22, 'after' => 80, 'shd' => 'F6F1E4']);
+                        }
+                        $body .= self::p('', ['size' => 6, 'after' => 160]);
+                    } elseif ($type === 'list') {
+                        foreach ((array) ($block['items'] ?? []) as $item) {
+                            $body .= self::p($e('– ' . $item), ['size' => 24, 'after' => 80]);
+                        }
+                        $body .= self::p('', ['size' => 6, 'after' => 120]);
+                    } else {
+                        $body .= self::p($e((string) $block['text']), ['size' => 24, 'justify' => true, 'after' => 200]);
+                    }
                 }
             }
         }
@@ -98,6 +117,9 @@ final class Docx
         $before = (int) ($opts['before'] ?? 0);
         $after = (int) ($opts['after'] ?? 120);
         $pPr .= '<w:spacing w:before="' . $before . '" w:after="' . $after . '" w:line="340" w:lineRule="auto"/>';
+        if (!empty($opts['shd'])) {
+            $pPr .= '<w:shd w:val="clear" w:color="auto" w:fill="' . $opts['shd'] . '"/>';
+        }
 
         $rPr = '<w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/>';
         $rPr .= '<w:sz w:val="' . (int) ($opts['size'] ?? 24) . '"/>';

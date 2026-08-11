@@ -15,9 +15,22 @@ final class ChapterTools
 {
     public static function chapter(int $projectId, int $num): array
     {
+        \App\Core\Migrations::run();
         $chapter = Db::one('SELECT * FROM chapters WHERE project_id = ? AND num = ?', [$projectId, $num]);
         if (!$chapter) {
             throw new \RuntimeException('Chapitre introuvable.');
+        }
+        $role = (string) ($chapter['role'] ?? 'chapter');
+        if ($role === 'intro') {
+            $chapter['label'] = 'Introduction';
+        } elseif ($role === 'conclusion') {
+            $chapter['label'] = 'Conclusion';
+        } else {
+            $before = Db::one(
+                "SELECT COUNT(*) AS n FROM chapters WHERE project_id = ? AND role = 'chapter' AND num < ?",
+                [$projectId, $num]
+            );
+            $chapter['label'] = 'Chapitre ' . ((int) ($before['n'] ?? 0) + 1);
         }
         $sections = Db::all('SELECT num, title, status, content, words FROM sections WHERE chapter_id = ? ORDER BY num', [$chapter['id']]);
         $images = Db::all('SELECT slot, caption, spec, filename, id FROM images WHERE project_id = ? AND chapter_num = ? ORDER BY slot', [$projectId, $num]);
@@ -70,7 +83,9 @@ final class ChapterTools
             }
             $text = Gemini::text(
                 $instruction . "\nContraintes : français, vouvoiement, paragraphes séparés par une ligne vide, "
-                . "aucun titre, aucun markdown.\n\nTEXTE :\n" . $section['content'],
+                . "aucun titre, aucun markdown. IMPORTANT : conserve les encadrés délimités par une ligne "
+                . "« :::type » et une ligne « ::: » EXACTEMENT avec cette syntaxe (leur contenu peut être "
+                . "retravaillé, jamais leur délimitation).\n\nTEXTE :\n" . $section['content'],
                 ['model' => 'pro', 'temperature' => (float) Config::get('gemini.temperature_writing', 0.8),
                  'system' => 'Tu es un éditeur littéraire exigeant. Tu retravailles le texte demandé, rien d’autre.']
             );

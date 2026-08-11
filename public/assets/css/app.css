@@ -406,6 +406,25 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .reader-inner h3.sec { font-family: var(--serif); font-size: 24px; margin: 34px 0 14px; }
 .reader-prose { font-family: var(--serif); font-size: 19.5px; line-height: 1.62; color: #26241E; text-wrap: pretty; }
 .reader-prose p { margin: 0 0 20px; }
+.reader-callout {
+  margin: 26px 0; padding: 16px 18px 17px; background: var(--paper-soft);
+  border-left: 4px solid var(--accent); border-radius: 0 10px 10px 0;
+  font-family: var(--sans);
+}
+.reader-callout .rc-label {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+}
+.reader-callout p { font-size: 14.5px; line-height: 1.6; color: var(--ink); margin: 0 0 8px; }
+.reader-callout p:last-child { margin-bottom: 0; }
+.reader-callout.k-retenir   { border-left-color: var(--navy);  background: #EFF0F4; }
+.reader-callout.k-chiffre   { border-left-color: var(--accent); background: var(--accent-soft); }
+.reader-callout.k-conseil   { border-left-color: var(--green);  background: var(--green-soft); }
+.reader-callout.k-exemple   { border-left-color: #8A4B6B;       background: #F5EEF2; }
+.reader-callout.k-faq       { border-left-color: var(--navy);   background: var(--bg); }
+.reader-callout.k-attention { border-left-color: #A03D2E;       background: #FAECE8; }
+.reader-list { margin: 0 0 20px; padding-left: 22px; font-family: var(--serif); font-size: 19.5px; line-height: 1.62; color: #26241E; }
+.reader-list li { margin-bottom: 8px; }
 .reader-figure { margin: 34px 0; }
 .reader-figure .slot {
   aspect-ratio: 3/2; border: 1px dashed #CFC4AC; border-radius: 10px; background: #EFE8DA;

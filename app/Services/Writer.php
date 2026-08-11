@@ -61,7 +61,7 @@ final class Writer
         }
 
         $section = Db::one(
-            "SELECT s.*, c.num AS chapter_num, c.title AS chapter_title, c.target_words, c.id AS chap_id
+            "SELECT s.*, c.num AS chapter_num, c.role AS chapter_role, c.title AS chapter_title, c.target_words, c.id AS chap_id
              FROM sections s JOIN chapters c ON c.id = s.chapter_id
              WHERE c.project_id = ? AND s.status != 'done'
              ORDER BY c.num, s.num LIMIT 1",
@@ -75,9 +75,10 @@ final class Writer
         }
 
         $checkpoint = 'ch' . $section['chapter_num'] . ' §' . $section['num'];
+        $label = self::labelFor($projectId, (string) ($section['chapter_role'] ?? 'chapter'), (int) $section['chapter_num']);
         Db::run("UPDATE sections SET status = 'writing' WHERE id = ?", [$section['id']]);
         Db::run("UPDATE chapters SET status = 'writing' WHERE id = ? AND status = 'wait'", [$section['chap_id']]);
-        Util::journal($projectId, 'ok', 'Chapitre ' . $section['chapter_num'] . ' · section ' . $section['num'] . ' — rédaction');
+        Util::journal($projectId, 'ok', $label . ' · section ' . $section['num'] . ' — rédaction');
 
         try {
             $text = self::writeSection($project, $concept, $section);
@@ -94,7 +95,7 @@ final class Writer
             "UPDATE sections SET status = 'done', content = ?, words = ?, updated_at = ? WHERE id = ?",
             [$text, $words, Db::now(), $section['id']]
         );
-        Util::journal($projectId, 'ok', 'Chapitre ' . $section['chapter_num'] . ' · section ' . $section['num'] . ' — terminée (' . Util::nf($words) . ' mots)');
+        Util::journal($projectId, 'ok', $label . ' · section ' . $section['num'] . ' — terminée (' . Util::nf($words) . ' mots)');
 
         // Cohérence longueur vs sommaire
         $target = (int) round($section['target_words'] / max(1, (int) Config::get('writing.sections_per_chapter', 3)));
@@ -119,7 +120,7 @@ final class Writer
                     Util::journal($projectId, 'dim', 'Emplacement' . ((int) $slots['n'] > 1 ? 's' : '') . ' visuel' . ((int) $slots['n'] > 1 ? 's' : '') . ' ' . $section['chapter_num'] . '.1–' . $section['chapter_num'] . '.' . $slots['n'] . ' réservé' . ((int) $slots['n'] > 1 ? 's' : ''));
                 }
             }
-            Util::journal($projectId, 'ok', 'Chapitre ' . $section['chapter_num'] . ' — terminé · sauvegarde');
+            Util::journal($projectId, 'ok', $label . ' — terminé(e) · sauvegarde');
         }
 
         return self::status(self::freshProject($projectId));
@@ -130,7 +131,7 @@ final class Writer
     {
         $projectId = (int) $project['id'];
         $chapters = Db::all(
-            "SELECT c.id, c.num, c.title, c.status, c.target_words,
+            "SELECT c.id, c.num, c.role, c.title, c.status, c.target_words,
                     COALESCE(SUM(CASE WHEN s.status = 'done' THEN s.words END), 0) AS words_done,
                     COUNT(s.id) AS sections_total,
                     SUM(s.status = 'done') AS sections_done
@@ -172,14 +173,38 @@ final class Writer
         $pagesEst = $wordsDone > 0 ? Layout::estimatePages($wordsDone, count($chapters), $figures) : 0;
 
         $secondsPer = (int) Config::get('writing.seconds_per_section', 40);
-        $chaptersOut = array_map(fn ($c) => [
-            'num'           => (int) $c['num'],
-            'title'         => $c['title'],
-            'status'        => $c['status'],
-            'words_done'    => (int) $c['words_done'],
-            'words_target'  => (int) $c['target_words'],
-            'pct'           => (int) $c['sections_total'] > 0 ? (int) round((int) $c['sections_done'] / (int) $c['sections_total'] * 100) : 0,
-        ], $chapters);
+        $chapterIndex = 0;
+        $currentLabel = '—';
+        $chaptersOut = array_map(function ($c) use (&$chapterIndex, &$currentLabel, $current) {
+            $role = (string) ($c['role'] ?? 'chapter');
+            if ($role === 'chapter') {
+                $chapterIndex++;
+            }
+            $label = match ($role) {
+                'intro'      => 'Introduction',
+                'conclusion' => 'Conclusion',
+                default      => 'Chapitre ' . $chapterIndex,
+            };
+            $short = match ($role) {
+                'intro'      => 'INTRO',
+                'conclusion' => 'CONCL',
+                default      => 'CH ' . str_pad((string) $chapterIndex, 2, '0', STR_PAD_LEFT),
+            };
+            if ($current && (int) $c['num'] === (int) $current['num']) {
+                $currentLabel = $label;
+            }
+            return [
+                'num'           => (int) $c['num'],
+                'role'          => $role,
+                'label'         => $label,
+                'short'         => $short,
+                'title'         => $c['title'],
+                'status'        => $c['status'],
+                'words_done'    => (int) $c['words_done'],
+                'words_target'  => (int) $c['target_words'],
+                'pct'           => (int) $c['sections_total'] > 0 ? (int) round((int) $c['sections_done'] / (int) $c['sections_total'] * 100) : 0,
+            ];
+        }, $chapters);
 
         return [
             'writing_status' => $project['writing_status'],
@@ -188,6 +213,7 @@ final class Writer
             'pages_est'      => $pagesEst,
             'chapter_current'=> $current ? (int) $current['num'] : count($chapters),
             'chapter_total'  => count($chapters),
+            'current_label'  => $current ? $currentLabel : '—',
             'eta_min'        => (int) max(1, ceil(($sectionsTotal - $sectionsDone) * $secondsPer / 60)),
             'checkpoint'     => $checkpoint,
             'chapters'       => $chaptersOut,
@@ -233,21 +259,46 @@ final class Writer
         $bookTitle = $concept['title'] ?? $project['title'];
         $hook = $concept['hook'] ?? '';
         $promise = $concept['description'] ?? '';
+        $role = (string) ($section['chapter_role'] ?? 'chapter');
+
+        $calloutRule = "- enrichis le texte avec 1 à 2 ENCADRÉS à forte valeur ajoutée, insérés aux endroits pertinents, "
+            . "choisis parmi ces types (varie-les, jamais deux fois le même type dans une section) :\n"
+            . "  :::retenir (l'essentiel en 2-3 phrases) · :::chiffre (un chiffre marquant et son explication) · "
+            . ":::conseil (astuce immédiatement actionnable) · :::exemple (mini-cas concret) · "
+            . ":::faq (une question que se pose le lecteur, suivie de la réponse) · :::attention (piège à éviter)\n"
+            . "  SYNTAXE EXACTE, seule mise en forme autorisée :\n  :::conseil\n  Texte de l'encadré…\n  :::\n";
+
+        $roleBrief = match ($role) {
+            'intro' => "Tu rédiges l'INTRODUCTION du livre. Objectifs : accrocher dès la première phrase par une "
+                . "situation que le lecteur vit, poser le problème, formuler la promesse du livre et annoncer le "
+                . "parcours. Pas de conseils détaillés ici (ils viennent dans les chapitres). Encadrés : 0 à 1 maximum "
+                . "(plutôt :::retenir en fin de section).\n",
+            'conclusion' => "Tu rédiges la CONCLUSION du livre. Objectifs : synthétiser les transformations promises, "
+                . "renvoyer aux moments clés du livre, puis donner un élan final. Dans la section « plan d'action », "
+                . "inclus une liste « – » d'actions concrètes à démarrer cette semaine. Encadré :::retenir bienvenu.\n",
+            default => '',
+        };
+
+        $chapterLine = $role === 'chapter'
+            ? "CHAPITRE EN COURS : « {$section['chapter_title']} »\n"
+            : mb_strtoupper($section['chapter_title']) . " du livre\n";
 
         $prompt = "LIVRE : « {$bookTitle} »" . ($hook ? " — {$hook}" : '') . "\n"
             . ($promise ? "PROMESSE : {$promise}\n" : '')
-            . "SOMMAIRE COMPLET :\n{$tocText}"
-            . "CHAPITRE EN COURS : {$section['chapter_num']}. {$section['chapter_title']}\n"
+            . "SOMMAIRE COMPLET (entre l'introduction et la conclusion) :\n{$tocText}"
+            . $chapterLine
             . "SES SOUS-PARTIES : {$siblingText}\n"
             . "SECTION À RÉDIGER MAINTENANT : §{$section['num']} « {$section['title']} »\n"
             . ($tail !== '' ? "FIN DU TEXTE DÉJÀ ÉCRIT (pour la continuité, ne pas répéter) :\n« …{$tail} »\n" : '')
-            . "\nRédige intégralement cette section en français.\n"
+            . "\n" . $roleBrief
+            . "Rédige intégralement cette section en français.\n"
             . "Contraintes :\n"
             . "- environ {$targetWords} mots (±15 %) ;\n"
             . "- ton : {$project['tone']}, tutoiement interdit, s'adresser au lecteur avec « vous » ;\n"
             . "- paragraphes de 3 à 6 phrases séparés par une ligne vide ; listes à puces « – » autorisées avec parcimonie ;\n"
-            . "- AUCUN titre, AUCUN markdown (pas de #, pas de **), aucune numérotation : uniquement le corps du texte ;\n"
-            . "- ne conclus pas le livre, ne résume pas la section : enchaîne naturellement avec la suite ;\n"
+            . $calloutRule
+            . "- en dehors des encadrés ci-dessus : AUCUN titre, AUCUN markdown (pas de #, pas de **), aucune numérotation ;\n"
+            . "- ne conclus pas le livre" . ($role === 'conclusion' ? " avant la dernière section" : '') . ", ne résume pas la section : enchaîne naturellement ;\n"
             . "- contenu concret : exemples, chiffres plausibles, mises en situation, pas de généralités creuses.";
 
         return trim(Gemini::text($prompt, [
@@ -256,6 +307,22 @@ final class Writer
             'system'      => "Tu es un auteur professionnel de livres pratiques en français. "
                 . "Tu écris un texte fluide, précis, sans remplissage, prêt à être imprimé.",
         ]));
+    }
+
+    /** Libellé lisible d'un chapitre (Introduction / Chapitre N / Conclusion). */
+    private static function labelFor(int $projectId, string $role, int $num): string
+    {
+        if ($role === 'intro') {
+            return 'Introduction';
+        }
+        if ($role === 'conclusion') {
+            return 'Conclusion';
+        }
+        $row = Db::one(
+            "SELECT COUNT(*) AS n FROM chapters WHERE project_id = ? AND role = 'chapter' AND num < ?",
+            [$projectId, $num]
+        );
+        return 'Chapitre ' . ((int) ($row['n'] ?? 0) + 1);
     }
 
     private static function duplicateParagraphs(int $chapterId): int

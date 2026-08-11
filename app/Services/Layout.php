@@ -196,10 +196,16 @@ final class Layout
     /** Contenu structuré du livre pour les rendus (print, PDF, docx). */
     public static function bookData(array $project, ?array $concept, array $user): array
     {
+        \App\Core\Migrations::run();
         $projectId = (int) $project['id'];
         $chapters = Db::all('SELECT * FROM chapters WHERE project_id = ? ORDER BY num', [$projectId]);
         $out = [];
+        $chapterIndex = 0;
         foreach ($chapters as $chapter) {
+            $role = (string) ($chapter['role'] ?? 'chapter');
+            if ($role === 'chapter') {
+                $chapterIndex++;
+            }
             $sections = Db::all(
                 "SELECT num, title, content, words FROM sections WHERE chapter_id = ? ORDER BY num",
                 [$chapter['id']]
@@ -209,12 +215,20 @@ final class Layout
                 [$projectId, (int) $chapter['num']]
             );
             $out[] = [
-                'num'      => (int) $chapter['num'],
+                'num'         => (int) $chapter['num'],
+                'role'        => $role,
+                'display_num' => $role === 'chapter' ? $chapterIndex : 0,
+                'label'       => match ($role) {
+                    'intro'      => 'Introduction',
+                    'conclusion' => 'Conclusion',
+                    default      => 'Chapitre ' . $chapterIndex,
+                },
                 'title'    => $chapter['title'],
                 'sections' => array_map(fn ($s) => [
                     'num'        => (int) $s['num'],
                     'title'      => $s['title'],
                     'paragraphs' => Util::paragraphs((string) ($s['content'] ?? '')),
+                    'blocks'     => Util::blocks((string) ($s['content'] ?? '')),
                 ], $sections),
                 'images'   => $images,
             ];
@@ -228,6 +242,7 @@ final class Layout
             'author'   => $texts['author'] ?? ($user['display_name'] ?: 'Auteur'),
             'chapters' => $out,
             'year'     => date('Y'),
+            'callout_labels' => Util::CALLOUTS,
         ];
     }
 }

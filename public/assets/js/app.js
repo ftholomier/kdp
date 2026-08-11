@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c11';
+  const BUILD = '2026-08-11 · c12';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -52,6 +52,72 @@
   function debounce(key, fn, ms) {
     clearTimeout(debounces[key]);
     debounces[key] = setTimeout(fn, ms || 600);
+  }
+
+  // Encadrés éditoriaux : mêmes types que côté serveur (Util::CALLOUTS)
+  const CALLOUT_LABELS = {
+    retenir: 'À retenir', chiffre: 'Chiffre clé', conseil: 'Conseil',
+    exemple: 'Exemple', faq: 'Question fréquente', attention: 'Attention'
+  };
+
+  /** Parse un contenu de section en blocs {t:'p'|'list'|'call', …} (miroir PHP Util::blocks). */
+  function parseBlocks(text) {
+    const lines = String(text || '').replace(/\r\n/g, '\n').trim().split('\n');
+    const blocks = [];
+    let buffer = [];
+    let callout = null;
+    const flush = () => {
+      const chunk = buffer.join('\n').trim();
+      buffer = [];
+      if (!chunk) return;
+      chunk.split(/\n\s*\n/).forEach(paragraph => {
+        const rows = paragraph.split('\n').map(r => r.trim()).filter(Boolean);
+        const listRows = rows.filter(r => /^[–\-•]\s+/.test(r));
+        if (rows.length > 1 && listRows.length >= Math.max(1, Math.floor(rows.length * 0.6))) {
+          blocks.push({ t: 'list', items: rows.map(r => r.replace(/^[–\-•]\s+/, '')).filter(Boolean) });
+        } else {
+          blocks.push({ t: 'p', text: paragraph.replace(/\n/g, ' ') });
+        }
+      });
+    };
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const open = trimmed.match(/^:::\s*([a-zé]+)\s*$/);
+      if (!callout && open && CALLOUT_LABELS[open[1]]) {
+        flush();
+        callout = { kind: open[1], lines: [] };
+        continue;
+      }
+      if (callout && /^:::\s*$/.test(trimmed)) {
+        const content = callout.lines.join('\n').trim();
+        if (content) blocks.push({ t: 'call', kind: callout.kind, text: content });
+        callout = null;
+        continue;
+      }
+      if (callout) callout.lines.push(line);
+      else buffer.push(line);
+    }
+    if (callout) {
+      const content = callout.lines.join('\n').trim();
+      if (content) blocks.push({ t: 'call', kind: callout.kind, text: content });
+    }
+    flush();
+    return blocks;
+  }
+
+  function blocksHtml(content) {
+    return parseBlocks(content).map(block => {
+      if (block.t === 'call') {
+        return `<div class="reader-callout k-${esc(block.kind)}">
+          <div class="rc-label">${esc(CALLOUT_LABELS[block.kind] || block.kind)}</div>
+          ${block.text.split(/\n\s*\n/).map(p => `<p>${esc(p.trim())}</p>`).join('')}
+        </div>`;
+      }
+      if (block.t === 'list') {
+        return `<ul class="reader-list">${block.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+      }
+      return `<p>${esc(block.text)}</p>`;
+    }).join('');
   }
 
   let toastTimer = null;
@@ -750,7 +816,7 @@
     const running = st.writing_status === 'running';
     const done = st.writing_status === 'done';
     const statusLabel = done ? 'Rédaction terminée · manuscrit complet'
-      : running ? `Rédaction en cours · chapitre ${st.chapter_current} sur ${st.chapter_total}`
+      : running ? `Rédaction en cours · ${st.current_label && st.current_label !== '—' ? st.current_label.toLowerCase() : 'chapitre ' + st.chapter_current} (${st.chapter_current}/${st.chapter_total})`
       : 'En pause · reprise possible à tout moment';
 
     return `
@@ -811,7 +877,7 @@
                   : '<span class="badge badge-wait">En attente</span>';
                 return `
                 <div class="chapter-run-card ${stateCls}">
-                  <div class="head"><span class="ch">CH ${pad2(c.num)}</span>${badge}</div>
+                  <div class="head"><span class="ch">${esc(c.short || 'CH ' + pad2(c.num))}</span>${badge}</div>
                   <div class="title">${esc(c.title)}</div>
                   <div class="track"><div class="fill" style="width:${c.pct}%"></div></div>
                   <div class="nums"><span>${nf(c.words_done)} / ${nf(c.words_target)} mots</span><span>${c.pct}%</span></div>
@@ -924,20 +990,20 @@
         </div>
         ${chapters.map(c => `
         <div class="reader-nav-item ${S.reader.num === c.num ? 'on' : ''}" onclick="App.openChapter(${c.num})">
-          <span class="n">${pad2(c.num)}</span><span class="t">${esc(c.title)}</span>
+          <span class="n">${esc(c.short || pad2(c.num))}</span><span class="t">${esc(c.title)}</span>
         </div>`).join('')}
       </div>
 
       <div class="reader-body">
         <div class="reader-inner">
           ${!data ? loadingCard('Chargement du chapitre…') : `
-          <div class="chapter-kicker">Chapitre ${pad2(data.chapter.num)}</div>
+          <div class="chapter-kicker">${esc(data.chapter.label || ('Chapitre ' + pad2(data.chapter.num)))}</div>
           <h1>${esc(data.chapter.title)}</h1>
           ${data.sections.map((sec, i) => `
             ${i > 0 ? `<h3 class="sec serif">${esc(sec.title)}</h3>` : ''}
             <div class="reader-prose">
-              ${(sec.content ? sec.content.split(/\n\s*\n/) : []).map(par => `<p>${esc(par)}</p>`).join('')
-                || '<p class="muted" style="font-family:var(--sans); font-size:14px;">Section pas encore rédigée.</p>'}
+              ${sec.content ? blocksHtml(sec.content)
+                : '<p class="muted" style="font-family:var(--sans); font-size:14px;">Section pas encore rédigée.</p>'}
             </div>
             ${i === 0 ? figuresView(data) : ''}
           `).join('')}

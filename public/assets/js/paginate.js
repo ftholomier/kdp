@@ -84,8 +84,11 @@
       let content = newSheet('opener');
       chapterStartPages[chapter.num] = pageNum;
 
+      const kicker = chapter.role === 'chapter'
+        ? (CHAPTER_WORDS[(chapter.display_num || chapter.num) - 1] || chapter.label || 'Chapitre ' + chapter.num)
+        : (chapter.label || chapter.title);
       content.insertAdjacentHTML('beforeend', `<div class="chapter-opening">
-        <div class="chapter-word">${esc(CHAPTER_WORDS[chapter.num - 1] || 'Chapitre ' + chapter.num)}</div>
+        <div class="chapter-word">${esc(kicker)}</div>
         <h1>${esc(chapter.title)}</h1>
       </div>`);
 
@@ -96,9 +99,21 @@
         if (sectionIndex > 0) {
           content = appendBlock(content, `<h2 class="section-title">${esc(section.title)}</h2>`, true);
         }
-        (section.paragraphs || []).forEach((paragraph, paragraphIndex) => {
-          const cls = firstParagraphOfChapter ? 'dropcap' : (paragraphIndex === 0 && sectionIndex > 0 ? '' : 'indent');
-          content = appendParagraph(content, paragraph, cls);
+        const blocks = section.blocks && section.blocks.length
+          ? section.blocks
+          : (section.paragraphs || []).map(p => ({ t: 'p', text: p }));
+        blocks.forEach((block, blockIndex) => {
+          if (block.t === 'call') {
+            content = appendBlock(content, calloutHtml(block), true);
+            return;
+          }
+          if (block.t === 'list') {
+            content = appendBlock(content,
+              `<div class="prose"><ul class="book-list">${block.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`, true);
+            return;
+          }
+          const cls = firstParagraphOfChapter ? 'dropcap' : (blockIndex === 0 && sectionIndex > 0 ? '' : 'indent');
+          content = appendParagraph(content, block.text, cls);
           firstParagraphOfChapter = false;
         });
         if (!figuresPlaced && chapter.images && chapter.images.length) {
@@ -111,6 +126,15 @@
     });
     // Pagination totale paire
     if (pageNum % 2 === 1) newSheet('blank');
+  }
+
+  function calloutHtml(block) {
+    const labels = BOOK.callout_labels || {};
+    const label = labels[block.kind] || block.kind;
+    const paragraphs = block.text.split(/\n\s*\n/).map(p => `<p>${esc(p.trim())}</p>`).join('');
+    return `<div class="callout k-${esc(block.kind)}">
+      <div class="co-label">${esc(label)}</div>${paragraphs}
+    </div>`;
   }
 
   function figureHtml(chapter, image) {
@@ -181,7 +205,7 @@
     if (!tocPage) return;
     tocPage.insertAdjacentHTML('beforeend', `<div class="toc-title">Sommaire</div>` +
       BOOK.chapters.map(chapter => `<div class="toc-line">
-        <span>${chapter.num}.&nbsp;&nbsp;${esc(chapter.title)}</span>
+        <span>${chapter.role === 'chapter' ? (chapter.display_num || chapter.num) + '.&nbsp;&nbsp;' : ''}${esc(chapter.title)}</span>
         <span class="pg">${chapterStartPages[chapter.num] || ''}</span>
       </div>`).join(''));
   }

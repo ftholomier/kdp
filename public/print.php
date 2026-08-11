@@ -109,6 +109,31 @@ h2.section-title {
   font-family: 'Instrument Serif', serif; font-size: 23pt; line-height: 1.12;
   margin: 0 0 9mm; font-weight: normal; letter-spacing: -.01em;
 }
+/* Encadrés éditoriaux (flat design, cohérents avec la DA du livre) */
+.callout {
+  margin: 7pt 0 8pt; padding: 6.5pt 8pt 7pt; background: #F6F1E4;
+  border-left: 2.2pt solid #C4571F; break-inside: avoid;
+}
+.callout.k-retenir   { border-left-color: #1B2A4A; background: #EFF0F4; }
+.callout.k-chiffre   { border-left-color: #C4571F; background: #FBF0E4; }
+.callout.k-conseil   { border-left-color: #4A6640; background: #EFF3EC; }
+.callout.k-exemple   { border-left-color: #8A4B6B; background: #F5EEF2; }
+.callout.k-faq       { border-left-color: #1B2A4A; background: #F4EFE4; }
+.callout.k-attention { border-left-color: #A03D2E; background: #FAECE8; }
+.callout .co-label {
+  font-family: 'IBM Plex Mono', monospace; font-size: 6.8pt; letter-spacing: .18em;
+  text-transform: uppercase; color: #55503F; margin-bottom: 3pt;
+}
+.callout p {
+  font-family: 'Instrument Sans', sans-serif; font-size: 9.4pt; line-height: 1.5;
+  color: #26241E; text-align: left; margin: 0 0 3pt; text-indent: 0; hyphens: none;
+}
+.callout p:last-child { margin-bottom: 0; }
+.prose ul.book-list { margin: 4pt 0 6pt; padding-left: 11pt; }
+.prose ul.book-list li {
+  font-family: 'Instrument Serif', serif; font-size: 11.2pt; line-height: 1.42;
+  color: #221F19; margin-bottom: 2.2pt;
+}
 figure.book-figure { margin: 6pt 0 8pt; }
 figure.book-figure .frame {
   width: 100%; aspect-ratio: 3/2; border: .3pt dashed #CFC4AC; background: #EFE8DA;

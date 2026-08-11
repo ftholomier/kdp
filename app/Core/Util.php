@@ -73,4 +73,83 @@ final class Util
         $parts = preg_split('/\n\s*\n/u', trim(str_replace("\r\n", "\n", $text))) ?: [];
         return array_values(array_filter(array_map('trim', $parts), fn ($p) => $p !== ''));
     }
+
+    /** Encadrés éditoriaux reconnus dans le texte des sections. */
+    public const CALLOUTS = [
+        'retenir'   => 'À retenir',
+        'chiffre'   => 'Chiffre clé',
+        'conseil'   => 'Conseil',
+        'exemple'   => 'Exemple',
+        'faq'       => 'Question fréquente',
+        'attention' => 'Attention',
+    ];
+
+    /**
+     * Découpe un contenu de section en blocs typés :
+     *   {t:'p', text}  ·  {t:'list', items[]}  ·  {t:'call', kind, text}
+     * Les encadrés utilisent la syntaxe :
+     *   :::conseil
+     *   Texte de l'encadré…
+     *   :::
+     */
+    public static function blocks(string $text): array
+    {
+        $lines = explode("\n", trim(str_replace("\r\n", "\n", $text)));
+        $blocks = [];
+        $buffer = [];
+        $callout = null;      // ['kind' => ..., 'lines' => []]
+
+        $flush = function () use (&$buffer, &$blocks): void {
+            $chunk = trim(implode("\n", $buffer));
+            $buffer = [];
+            if ($chunk === '') {
+                return;
+            }
+            foreach (self::paragraphs($chunk) as $paragraph) {
+                $rows = array_map('trim', explode("\n", $paragraph));
+                $isList = count(array_filter($rows, fn ($r) => preg_match('/^[–\-•]\s+/u', $r))) >= max(1, (int) floor(count($rows) * 0.6));
+                if ($isList && count($rows) > 1) {
+                    $items = array_values(array_filter(array_map(
+                        fn ($r) => trim(preg_replace('/^[–\-•]\s+/u', '', $r) ?? ''),
+                        $rows
+                    ), fn ($r) => $r !== ''));
+                    $blocks[] = ['t' => 'list', 'items' => $items];
+                } else {
+                    $blocks[] = ['t' => 'p', 'text' => str_replace("\n", ' ', $paragraph)];
+                }
+            }
+        };
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($callout === null && preg_match('/^:::\s*([a-zé]+)\s*$/u', $trimmed, $m)
+                && isset(self::CALLOUTS[$m[1]])) {
+                $flush();
+                $callout = ['kind' => $m[1], 'lines' => []];
+                continue;
+            }
+            if ($callout !== null && preg_match('/^:::\s*$/', $trimmed)) {
+                $content = trim(implode("\n", $callout['lines']));
+                if ($content !== '') {
+                    $blocks[] = ['t' => 'call', 'kind' => $callout['kind'], 'text' => $content];
+                }
+                $callout = null;
+                continue;
+            }
+            if ($callout !== null) {
+                $callout['lines'][] = $line;
+            } else {
+                $buffer[] = $line;
+            }
+        }
+        if ($callout !== null) {
+            // encadré jamais refermé : on le récupère quand même
+            $content = trim(implode("\n", $callout['lines']));
+            if ($content !== '') {
+                $blocks[] = ['t' => 'call', 'kind' => $callout['kind'], 'text' => $content];
+            }
+        }
+        $flush();
+        return $blocks;
+    }
 }

@@ -851,6 +851,11 @@ final class Router
         $canvas = imagecreatetruecolor(imagesx($source), imagesy($source));
         imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
         imagecopy($canvas, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
+        // Style visuel choisi à l'étape 03 : N&B et schémas passent en niveaux
+        // de gris (fidèle à la spec annoncée et à l'impression KDP encre noire)
+        if (($project['photo_style'] ?? 'nb') !== 'couleur') {
+            imagefilter($canvas, IMG_FILTER_GRAYSCALE);
+        }
         imagejpeg($canvas, $dir . '/' . $name, 92);
         imagedestroy($source);
         imagedestroy($canvas);

@@ -173,6 +173,125 @@ final class Toc
         Util::journal($projectId, 'ok', 'Sommaire validé : introduction + ' . count($toc) . ' chapitres + conclusion, ' . Util::nf($wordsTotal) . ' mots visés');
     }
 
+    /**
+     * Ajoute un chapitre À LA DEMANDE (« ajoute un chapitre sur… »), à tout
+     * moment : sur le brouillon de sommaire si rien n'est validé, ou DANS le
+     * livre déjà structuré (chapitres/sections/visuels créés, conclusion
+     * décalée) — même si la rédaction est terminée : le nouveau chapitre
+     * repart en attente d'écriture à l'étape 05.
+     */
+    public static function addChapter(array $project, ?array $concept, string $request): array
+    {
+        $request = trim($request);
+        if (mb_strlen($request) < 8) {
+            throw new \RuntimeException('Décrivez le chapitre souhaité (ex. : « un chapitre sur 50 recettes originales »).');
+        }
+        $projectId = (int) $project['id'];
+        $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
+        $photos = !empty($project['photos']);
+        $photosPer = (int) $project['photos_per'];
+
+        // Contexte : sommaire actuel (brouillon ou chapitres réels)
+        $existing = array_map(
+            fn ($c) => (string) $c['title'],
+            Db::all("SELECT title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num", [$projectId])
+        );
+        $live = count($existing) > 0;
+        $draft = self::draft($project);
+        if (!$live) {
+            $existing = array_map(fn ($c) => (string) $c['title'], $draft);
+        }
+
+        $visualSpec = $photos
+            ? ",\"visuals\":[{\"caption\":\"légende courte\",\"desc\":\"contenu précis du visuel\"}] (exactement {$photosPer} entrées)"
+            : '';
+        $prompt = "Tu es directeur éditorial. Un livre pratique en français est en cours :\n"
+            . 'Titre : « ' . ($concept['title'] ?? $project['title']) . " »\n"
+            . "Ton : {$project['tone']}.\n"
+            . 'Chapitres existants : ' . ($existing ? '« ' . implode(' » · « ', array_slice($existing, 0, 20)) . ' »' : 'aucun') . "\n\n"
+            . "L'auteur demande d'AJOUTER ce chapitre : « {$request} »\n\n"
+            . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
+            . '{"title":"titre évocateur du chapitre (max 70 caractères, sans numérotation)",'
+            . '"parts":["...","...","..."] (exactement ' . $sectionsPer . ' sous-parties courtes de 3 à 6 mots)'
+            . $visualSpec . '}' . "\n"
+            . "Le chapitre doit répondre exactement à la demande de l'auteur, dans le ton du livre, sans doublonner les chapitres existants.";
+
+        $data = Gemini::json($prompt, [
+            'model'       => 'fast',
+            'temperature' => 0.8,
+            'search'      => false,
+            'system'      => 'Tu construis des sommaires de livres pratiques impeccables. Réponse en français.',
+        ]);
+        $title = mb_substr(trim((string) ($data['title'] ?? '')), 0, 250);
+        if ($title === '') {
+            throw new \RuntimeException('Le chapitre généré est vide, reformulez votre demande.');
+        }
+        $parts = array_map(
+            fn ($p) => mb_substr(trim((string) $p), 0, 120),
+            array_slice(array_values((array) ($data['parts'] ?? [])), 0, $sectionsPer)
+        );
+        while (count($parts) < $sectionsPer) {
+            $parts[] = 'Partie ' . (count($parts) + 1);
+        }
+        $entry = ['title' => $title, 'parts' => $parts];
+        if ($photos) {
+            $visuals = array_slice(array_values((array) ($data['visuals'] ?? [])), 0, $photosPer);
+            $entry['visuals'] = array_map(fn ($v) => [
+                'caption' => mb_substr(trim((string) ($v['caption'] ?? $title)), 0, 200),
+                'desc'    => mb_substr(trim((string) ($v['desc'] ?? '')), 0, 300),
+            ], $visuals ?: array_fill(0, $photosPer, ['caption' => $title, 'desc' => '']));
+        }
+
+        // Brouillon de sommaire pas encore validé : simple ajout au brouillon
+        $draft[] = $entry;
+        self::saveDraft($projectId, $draft);
+        if (!$live) {
+            Util::journal($projectId, 'ok', 'Chapitre ajouté au sommaire : « ' . $title . ' »');
+            return ['live' => false, 'toc' => $draft, 'title' => $title];
+        }
+
+        // Livre déjà structuré : insertion réelle avant la conclusion
+        $last = Db::one("SELECT COALESCE(MAX(num), 1) AS n FROM chapters WHERE project_id = ? AND role = 'chapter'", [$projectId]);
+        $num = (int) $last['n'] + 1;
+        $avg = Db::one("SELECT COALESCE(ROUND(AVG(target_words)), 2000) AS w FROM chapters WHERE project_id = ? AND role = 'chapter'", [$projectId]);
+
+        $pdo = Db::pdo();
+        $pdo->beginTransaction();
+        try {
+            Db::run('UPDATE chapters SET num = num + 1 WHERE project_id = ? AND num >= ?', [$projectId, $num]);
+            Db::run('UPDATE images SET chapter_num = chapter_num + 1 WHERE project_id = ? AND chapter_num >= ?', [$projectId, $num]);
+            $chapterId = Db::insert(
+                "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
+                [$projectId, $num, 'chapter', $title, (int) $avg['w']]
+            );
+            foreach ($parts as $s => $partTitle) {
+                Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$chapterId, $s + 1, $partTitle]);
+            }
+            foreach (($entry['visuals'] ?? []) as $slotIndex => $visual) {
+                Db::run(
+                    'INSERT INTO images (project_id, chapter_num, slot, caption, spec, created_at) VALUES (?,?,?,?,?,?)',
+                    [
+                        $projectId, $num, $slotIndex + 1,
+                        trim(($visual['caption'] ?? '') . (!empty($visual['desc']) ? ' — ' . $visual['desc'] : '')),
+                        self::imageSpec($project),
+                        Db::now(),
+                    ]
+                );
+            }
+            // La rédaction repart : le chapitre neuf attend à l'étape 05
+            Db::run(
+                "UPDATE projects SET writing_status = IF(writing_status = 'done', 'paused', writing_status), updated_at = ? WHERE id = ?",
+                [Db::now(), $projectId]
+            );
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+        Util::journal($projectId, 'ok', 'Chapitre ' . ($num - 1) . ' inséré à la demande : « ' . $title . ' » — à rédiger à l\'étape 05');
+        return ['live' => true, 'toc' => $draft, 'title' => $title];
+    }
+
     public static function imageSpec(array $project): string
     {
         $style = match ($project['photo_style'] ?? 'nb') {

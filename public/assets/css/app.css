@@ -423,6 +423,15 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .reader-callout.k-exemple   { border-left-color: #8A4B6B;       background: #F5EEF2; }
 .reader-callout.k-faq       { border-left-color: var(--navy);   background: var(--bg); }
 .reader-callout.k-attention { border-left-color: #A03D2E;       background: #FAECE8; }
+.toc-request { margin-top: 18px; padding: 16px 18px; border-top: 1px dashed var(--line); }
+.toc-request .t { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.toc-request .row { display: flex; gap: 10px; }
+.toc-request input { flex: 1; padding: 9px 12px; font-size: 13px; }
+.toc-request .hint { margin-top: 8px; font-size: 11.5px; color: var(--faint); }
+.imagegen-box { margin-top: 10px; padding: 14px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 10px; }
+.imagegen-box textarea { width: 100%; padding: 9px 12px; font-size: 13px; resize: vertical; margin-bottom: 10px; }
+.imagegen-box .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.imagegen-box .hint { font-size: 11.5px; color: var(--faint); }
 .reader-subhead { font-family: var(--serif); font-weight: 400; font-size: 23px; margin: 22px 0 10px; color: var(--ink); }
 .reader-list { margin: 0 0 20px; padding-left: 22px; font-family: var(--serif); font-size: 19.5px; line-height: 1.62; color: #26241E; }
 .reader-list li { margin-bottom: 8px; }

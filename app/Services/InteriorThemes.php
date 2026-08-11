@@ -99,6 +99,44 @@ final class InteriorThemes
                 }
                 break;
 
+            case 'premium2':
+                // Panneau arrondi pastel + colonnes + encart arrondi (variante douce)
+                $rr = function (int $x1, int $y1, int $x2, int $y2, int $r, int $col) use ($im): void {
+                    imagefilledrectangle($im, $x1 + $r, $y1, $x2 - $r, $y2, $col);
+                    imagefilledrectangle($im, $x1, $y1 + $r, $x2, $y2 - $r, $col);
+                    foreach ([[$x1 + $r, $y1 + $r], [$x2 - $r, $y1 + $r], [$x1 + $r, $y2 - $r], [$x2 - $r, $y2 - $r]] as $c) {
+                        imagefilledellipse($im, $c[0], $c[1], $r * 2, $r * 2, $col);
+                    }
+                };
+                $mont = $fonts . 'Montserrat-SemiBold.ttf';
+                $montR = $fonts . 'Montserrat-Regular.ttf';
+                $rr(14, 14, $w - 14, 150, 14, $accentSoft);
+                imagettftext($im, 8, 0, 30, 40, $accent, $montR, 'CHAPITRE 3');
+                $rr(30, 48, 58, 52, 2, $accent);
+                imagettftext($im, 15, 0, 30, 82, $ink, $mont, 'Un titre tout');
+                imagettftext($im, 15, 0, 30, 104, $ink, $mont, 'en douceur');
+                $rr($w - 76, 92, $w - 30, 138, 12, $accent);
+                imagettftext($im, 16, 0, $w - 66, 124, $white, $mont, '03');
+                $rr(14, 160, (int) ($w * 0.42), 166, 3, $accent);
+                $colW = (int) (($w - 68 - 14) / 2);
+                for ($c = 0; $c < 2; $c++) {
+                    $cx = 34 + $c * ($colW + 14);
+                    for ($i = 0; $i < 8; $i++) {
+                        $len = $i === 7 ? 0.55 : (0.84 + ($i % 3) * 0.05);
+                        imagefilledrectangle($im, $cx, 186 + $i * 12, (int) ($cx + $colW * $len), 190 + $i * 12, $lightGray);
+                    }
+                }
+                $ex = 34 + $colW + 14;
+                $rr($ex, 296, $ex + $colW, 372, 10, $accentSoft);
+                imagettftext($im, 7, 0, $ex + 10, 314, $accent, $montR, 'A RETENIR');
+                for ($i = 0; $i < 3; $i++) {
+                    imagefilledrectangle($im, $ex + 10, 326 + $i * 12, $ex + $colW - 12, 330 + $i * 12, $lightGray);
+                }
+                for ($i = 0; $i < 5; $i++) {
+                    imagefilledrectangle($im, 34, 300 + $i * 12, (int) (34 + $colW * ($i === 4 ? 0.5 : 0.9)), 304 + $i * 12, $lightGray);
+                }
+                break;
+
             case 'elegant':
                 imagettftext($im, 8, 0, (int) ($w / 2 - 56), 60, $gray, $mono, 'C H A P I T R E  I I I');
                 imagefilledrectangle($im, (int) ($w / 2 - 34), 74, (int) ($w / 2 + 34), 75, $ink);

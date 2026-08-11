@@ -43,20 +43,23 @@ final class CoverStudio
      * Polices Google Fonts embarquées (app/fonts, licence OFL).
      * slug => [label, fichier, fichier italique|null, famille CSS (aperçu navigateur)]
      */
+    /** [label, regular, italique|null, css, gras réel|null] — fichiers STATIQUES
+     *  uniquement : les TTF variables rendaient leur instance par défaut
+     *  (Thin/ExtraLight) côté serveur, loin de l'aperçu navigateur. */
     public const FONTS = [
-        'instrument-serif' => ['Instrument Serif',  'InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', "'Instrument Serif', serif"],
-        'playfair'         => ['Playfair Display',  'PlayfairDisplay.ttf',         'PlayfairDisplay-Italic.ttf', "'Playfair Display', serif"],
-        'dm-serif'         => ['DM Serif Display',  'DMSerifDisplay.ttf',          'DMSerifDisplay-Italic.ttf',  "'DM Serif Display', serif"],
-        'abril'            => ['Abril Fatface',     'AbrilFatface.ttf',            null,                         "'Abril Fatface', serif"],
-        'lora'             => ['Lora',              'Lora.ttf',                    'Lora-Italic.ttf',            "'Lora', serif"],
-        'montserrat'       => ['Montserrat',        'Montserrat.ttf',              null,                         "'Montserrat', sans-serif"],
-        'poppins'          => ['Poppins',           'Poppins-SemiBold.ttf',        null,                         "'Poppins', sans-serif"],
-        'oswald'           => ['Oswald',            'Oswald.ttf',                  null,                         "'Oswald', sans-serif"],
-        'bebas'            => ['Bebas Neue',        'BebasNeue.ttf',               null,                         "'Bebas Neue', sans-serif"],
-        'josefin'          => ['Josefin Sans',      'JosefinSans.ttf',             null,                         "'Josefin Sans', sans-serif"],
-        'nunito'           => ['Nunito',            'Nunito.ttf',                  null,                         "'Nunito', sans-serif"],
-        'plex-mono'        => ['IBM Plex Mono',     'IBMPlexMono-Medium.ttf',      null,                         "'IBM Plex Mono', monospace"],
-        'instrument-sans'  => ['Instrument Sans',   'InstrumentSans.ttf',          null,                         "'Instrument Sans', sans-serif"],
+        'instrument-serif' => ['Instrument Serif',  'InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', "'Instrument Serif', serif",     null],
+        'playfair'         => ['Playfair Display',  'PlayfairDisplay.ttf',         'PlayfairDisplay-Italic.ttf', "'Playfair Display', serif",     null],
+        'dm-serif'         => ['DM Serif Display',  'DMSerifDisplay.ttf',          'DMSerifDisplay-Italic.ttf',  "'DM Serif Display', serif",     null],
+        'abril'            => ['Abril Fatface',     'AbrilFatface.ttf',            null,                         "'Abril Fatface', serif",        null],
+        'lora'             => ['Lora',              'Lora.ttf',                    'Lora-Italic.ttf',            "'Lora', serif",                 null],
+        'montserrat'       => ['Montserrat',        'Montserrat-Regular.ttf',      null,                         "'Montserrat', sans-serif",      'Montserrat-SemiBold.ttf'],
+        'poppins'          => ['Poppins',           'Poppins-SemiBold.ttf',        null,                         "'Poppins', sans-serif",         null],
+        'oswald'           => ['Oswald',            'Oswald.ttf',                  null,                         "'Oswald', sans-serif",          null],
+        'bebas'            => ['Bebas Neue',        'BebasNeue.ttf',               null,                         "'Bebas Neue', sans-serif",      null],
+        'josefin'          => ['Josefin Sans',      'JosefinSans-Regular.ttf',     null,                         "'Josefin Sans', sans-serif",    'JosefinSans-SemiBold.ttf'],
+        'nunito'           => ['Nunito',            'Nunito-Regular.ttf',          null,                         "'Nunito', sans-serif",          'Nunito-SemiBold.ttf'],
+        'plex-mono'        => ['IBM Plex Mono',     'IBMPlexMono-Medium.ttf',      null,                         "'IBM Plex Mono', monospace",    null],
+        'instrument-sans'  => ['Instrument Sans',   'InstrumentSans.ttf',          null,                         "'Instrument Sans', sans-serif", null],
     ];
 
     /** Registre pour l'interface (sélecteur avec aperçu). */
@@ -289,12 +292,16 @@ final class CoverStudio
         if ($content === '') {
             return;
         }
-        $font = self::fontFile((string) ($el['font'] ?? 'instrument-serif'), !empty($el['italic']));
+        $slug = (string) ($el['font'] ?? 'instrument-serif');
+        $italic = !empty($el['italic']);
+        $wantBold = (int) ($el['weight'] ?? 400) >= 600;
+        // Graisse RÉELLE quand la famille a un fichier SemiBold ; sinon faux gras
+        $font = self::fontFile($slug, $italic, $wantBold);
+        $bold = $wantBold && !self::hasBoldFile($slug, $italic);
         $size = max(14, (int) round((float) ($el['size'] ?? 5.5) * $W / 100));
         $lh = (float) ($el['lh'] ?? 1.18);
         $maxLines = (int) ($el['maxLines'] ?? 0);
         $align = (string) ($el['align'] ?? 'left');
-        $bold = (int) ($el['weight'] ?? 400) >= 600;
         $color = self::alloc($im, (string) ($el['color'] ?? '#1A1A17'));
 
         // Paragraphes séparés par une ligne vide ('' = espace vertical)
@@ -779,10 +786,21 @@ final class CoverStudio
     }
 
     /** Chemin TTF d'une police (italique si demandé et disponible). */
-    public static function fontFile(string $slug, bool $italic = false): string
+    public static function fontFile(string $slug, bool $italic = false, bool $bold = false): string
     {
         $def = self::FONTS[$slug] ?? self::FONTS['instrument-serif'];
         $file = $italic && $def[2] !== null ? $def[2] : $def[1];
+        // Graisse réelle demandée : fichier SemiBold statique quand il existe
+        if ($bold && !$italic && isset($def[4]) && $def[4] !== null) {
+            $file = $def[4];
+        }
         return APP_ROOT . '/app/fonts/' . $file;
+    }
+
+    /** La famille possède-t-elle un fichier de graisse réel (vs faux gras) ? */
+    public static function hasBoldFile(string $slug, bool $italic = false): bool
+    {
+        $def = self::FONTS[$slug] ?? self::FONTS['instrument-serif'];
+        return !$italic && isset($def[4]) && $def[4] !== null;
     }
 }

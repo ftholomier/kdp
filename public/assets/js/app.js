@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c15';
+  const BUILD = '2026-08-11 · c16';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -667,6 +667,18 @@
               <span onclick="App.moveToc(${i}, 1)" title="Descendre">▼</span>
             </div>
           </div>`).join('')}
+
+          <div class="toc-request">
+            <div class="t">Un chapitre en tête ? Demandez-le.</div>
+            <div class="row">
+              <input type="text" id="toc-request" placeholder="Ex. : ajoute un chapitre sur la création de 50 recettes originales"
+                     onkeydown="if(event.key==='Enter'){App.addChapter();}">
+              <button class="btn btn-soft" onclick="App.addChapter()" ${S.busy.addchapter ? 'disabled' : ''}>
+                ${S.busy.addchapter ? '<span class="spinner"></span> Ajout…' : '+ Ajouter'}
+              </button>
+            </div>
+            <div class="hint">Fonctionne aussi après rédaction : le chapitre est inséré avant la conclusion et s'écrit à l'étape 05.</div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -1058,7 +1070,19 @@
       </div>
       <figcaption>Fig. ${data.chapter.num}.${img.slot} — ${esc(img.caption || '')}
         <span class="upload-link" onclick="App.uploadImage(${img.id})">${img.filename ? 'Remplacer l’image' : 'Téléverser l’image'}</span>
+        <span class="upload-link" onclick="App.openImageGen(${img.id})">✨ ${img.filename ? 'Regénérer par l’IA' : 'Générer par l’IA'}</span>
       </figcaption>
+      ${S.imageGen && S.imageGen.id === img.id ? `
+      <div class="imagegen-box">
+        <textarea id="ig-prompt" rows="3" placeholder="Précisez le visuel souhaité (optionnel — l'IA connaît déjà la légende, le chapitre et le style ${esc(S.project.photo_style === 'couleur' ? 'couleur' : S.project.photo_style === 'schemas' ? 'schéma' : 'noir & blanc')})">${esc(S.imageGen.prompt || '')}</textarea>
+        <div class="row">
+          <button class="btn btn-soft" onclick="App.runImageGen()" ${S.busy.imagegen ? 'disabled' : ''}>
+            ${S.busy.imagegen ? '<span class="spinner"></span> Génération…' : (img.filename ? '↻ Nouvelle version' : '✨ Générer le visuel')}
+          </button>
+          <button class="btn btn-ghost" onclick="App.closeImageGen()">Fermer</button>
+          <span class="hint">Pas convaincu ? Précisez votre demande et regénérez, autant de fois que nécessaire.</span>
+        </div>
+      </div>` : ''}
     </figure>`).join('');
   }
 
@@ -1923,6 +1947,22 @@
       setBusy('toc', false);
     },
 
+    async addChapter() {
+      const input = document.getElementById('toc-request');
+      const request = input ? input.value.trim() : '';
+      if (request.length < 8) { toast('Décrivez le chapitre souhaité en quelques mots.', true); return; }
+      setBusy('addchapter', true);
+      try {
+        const data = await Api.post('toc/add-chapter', { id: S.project.id, request });
+        S.bundle.toc = data.toc;
+        S.project = data.project;
+        toast(data.live
+          ? '« ' + data.title + ' » inséré dans le livre — rédigez-le à l\'étape 05.'
+          : '« ' + data.title + ' » ajouté au sommaire.');
+      } catch (e) { toast(e.message, true); }
+      setBusy('addchapter', false);
+    },
+
     editTocTitle(index, text) {
       const title = String(text || '').trim();
       if (!title || !S.bundle.toc[index]) return;
@@ -2085,6 +2125,30 @@
     rewriteWithTone(tone) {
       S.modal = null;
       runChapterAction('rewrite', tone);
+    },
+
+    openImageGen(imageId) {
+      const img = ((S.reader.data || {}).images || []).find(i => Number(i.id) === Number(imageId)) || {};
+      S.imageGen = { id: imageId, prompt: S.imageGen && S.imageGen.id === imageId ? S.imageGen.prompt : (img.caption || '') };
+      render();
+      const box = document.getElementById('ig-prompt');
+      if (box) box.focus();
+    },
+
+    closeImageGen() { S.imageGen = null; render(); },
+
+    async runImageGen() {
+      if (!S.imageGen) return;
+      const box = document.getElementById('ig-prompt');
+      const prompt = box ? box.value.trim() : (S.imageGen.prompt || '');
+      S.imageGen.prompt = prompt;      // conservé pour affiner à la prochaine passe
+      setBusy('imagegen', true);
+      try {
+        await Api.post('images/generate', { id: S.project.id, image_id: S.imageGen.id, prompt });
+        toast('Visuel généré — pas convaincu ? Précisez votre demande et regénérez.');
+        await loadChapter(S.reader.num);
+      } catch (e) { toast(e.message, true); }
+      setBusy('imagegen', false);
     },
 
     uploadImage(imageId) {

@@ -25,7 +25,8 @@ final class PdfBook
         'moderne'   => ['name' => 'Contemporain', 'desc' => 'Titres Poppins, grands numéros de chapitre colorés.'],
         'magazine'  => ['name' => 'Magazine',     'desc' => 'Bandeaux pleine largeur, titres Bebas Neue impactants.'],
         'elegant'   => ['name' => 'Élégant',      'desc' => 'DM Serif centré, ornements minimaux, grande respiration.'],
-        'premium'   => ['name' => 'Premium',      'desc' => 'Esprit grand magazine : 2 colonnes, encarts en aplat, sections numérotées.'],
+        'premium'   => ['name' => 'Premium',      'desc' => 'Esprit grand magazine : colonnes variées, gros chiffres, aplats bord à bord.'],
+        'premium2'  => ['name' => 'Premium doux', 'desc' => 'La variante tendre : angles arrondis, tons pastel, Montserrat, grande respiration.'],
     ];
 
     public static function build(array $project, array $book, string $theme = 'editorial', string $accent = '#C4571F'): string
@@ -111,9 +112,10 @@ final class PdfComposer
             'magazine' => ['display', 26.0, 'band'],
             'elegant'  => ['display2', 21.0, 'centered'],
             'premium'  => ['sans', 20.0, 'premium'],
+            'premium2' => ['sans2', 20.0, 'premium2'],
             default    => ['body', 21.0, 'editorial'],
         };
-        if ($theme === 'premium') {
+        if ($this->isPremium()) {
             $this->bodySize = 9.4;     // densité magazine sur colonne étroite
             $this->leading = 13.2;
         }
@@ -135,7 +137,30 @@ final class PdfComposer
         if ($this->titleFont === 'display2') {
             $pdf->addTtf('display2', $fonts . 'DMSerifDisplay.ttf');
         }
+        if ($this->titleFont === 'sans2') {
+            // Premium doux : Montserrat, plus ronde et plus fun que Poppins
+            $pdf->addTtf('sans2', $fonts . 'Montserrat-SemiBold.ttf');
+            $pdf->addTtf('sans2r', $fonts . 'Montserrat-Regular.ttf');
+        }
         return $pdf;
+    }
+
+    /** Les deux variantes premium partagent le même moteur de composition. */
+    private function isPremium(): bool
+    {
+        return $this->opener === 'premium' || $this->opener === 'premium2';
+    }
+
+    /** Police titres/numéros du moteur premium (Poppins ou Montserrat). */
+    private function sansFont(): string
+    {
+        return $this->opener === 'premium2' ? 'sans2' : 'sans';
+    }
+
+    /** Police des kickers/étiquettes (mono éditorial, Montserrat en doux). */
+    private function labelFont(): string
+    {
+        return $this->opener === 'premium2' ? 'sans2r' : 'label';
     }
 
     public function compose(): string
@@ -192,6 +217,11 @@ final class PdfComposer
                 $this->pdf->rectRgb(0, $y - 58, $this->w * 0.36, 13, $this->accent);
                 $this->pdf->rectRgb($this->w * 0.36 + 6, $y - 58, 13, 13, $this->accentSoft);
                 break;
+            case 'premium2':
+                // Pastilles arrondies centrées — signature douce
+                $this->pdf->roundRectRgb(($this->w - 64) / 2, $y - 56, 52, 10, 5, $this->accent);
+                $this->pdf->roundRectRgb(($this->w - 64) / 2 + 58, $y - 56, 10, 10, 5, $this->accentSoft);
+                break;
             case 'centered':
                 $this->pdf->rectRgb(($this->w - 60) / 2, $y - 40, 60, 0.8, $this->ink);
                 break;
@@ -231,6 +261,8 @@ final class PdfComposer
             $this->pdf->rectRgb(($this->w - 36) / 2, $this->top + 54, 36, 1.4, $this->accent);
         } elseif ($this->opener === 'premium') {
             $this->pdf->rectRgb(($this->w - 44) / 2, $this->top + 52, 44, 4, $this->accent);
+        } elseif ($this->opener === 'premium2') {
+            $this->pdf->roundRectRgb(($this->w - 46) / 2, $this->top + 51, 46, 5, 2.5, $this->accent);
         }
         $y = $this->top + 92;
         foreach ($this->book['chapters'] as $chapter) {
@@ -269,7 +301,7 @@ final class PdfComposer
 
     private function composeBody(): void
     {
-        $premium = $this->opener === 'premium';
+        $premium = $this->isPremium();
         foreach ($this->book['chapters'] as $chapter) {
             $this->runningRecto = $chapter['title'];
             if ($this->pageNum % 2 === 1) {
@@ -289,7 +321,7 @@ final class PdfComposer
             foreach ($chapter['sections'] as $sIndex => $section) {
                 $mode = $premium ? $this->premiumMode((int) $chapter['num'], $sIndex) : '';
                 if ($premium) {
-                    $this->premiumCols = $mode === 'trio' ? 3 : 2;
+                    $this->premiumCols = match ($mode) { 'trio' => 3, 'solo' => 1, default => 2 };
                 }
                 if ($sIndex > 0) {
                     if ($premium) {
@@ -350,8 +382,8 @@ final class PdfComposer
      */
     private function premiumMode(int $chapterNum, int $sIndex): string
     {
-        $modes = ['feature', 'duo', 'trio'];
-        return $modes[($chapterNum + $sIndex) % 3];
+        $modes = ['feature', 'solo', 'duo', 'trio'];
+        return $modes[($chapterNum + $sIndex) % 4];
     }
 
     /**
@@ -431,7 +463,7 @@ final class PdfComposer
         foreach ($blocks as $block) {
             $type = $block['t'] ?? 'p';
             if ($type === 'call') {
-                $pad = 10.0;
+                $pad = 16.0;
                 $n = 0;
                 foreach (preg_split('/\n\s*\n/', trim((string) $block['text'])) ?: [] as $i => $paragraph) {
                     if ($i > 0) {
@@ -439,7 +471,7 @@ final class PdfComposer
                     }
                     $n += count($this->wrapText(trim($paragraph), 'body', 8.8, $colW - 2 * $pad));
                 }
-                $h += 30 + $n * 12.2 + $pad * 0.7 + 15;
+                $h += 38 + $n * 12.6 + $pad * 0.7 + 15;
             } elseif ($type === 'h') {
                 $h += 29.0;
             } elseif ($type === 'list') {
@@ -499,19 +531,19 @@ final class PdfComposer
                 // Grand aplat de couleur, numéro géant en tinte, GROS titre
                 // réversé, barre décalée sous le bloc — alternée d'un chapitre
                 // à l'autre pour varier le rythme des ouvertures.
-                $bandH = max(172.0, $this->h * 0.27);
+                $bandH = max(186.0, $this->h * 0.285);
                 $fg = $this->reverseInk();
                 $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
                 if ($isChapter && $displayNum !== '') {
                     $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
                     $numW = $this->pdf->width($numText, 'sans', 66);
-                    $this->pdf->text($this->w - $this->marginRight() - $numW, $bandH - 20, 'sans', 66, $numText, 0, 0, $this->accentMid());
+                    $this->pdf->text($this->w - $this->marginRight() - $numW, $bandH - 26, 'sans', 66, $numText, 0, 0, $this->accentMid());
                 }
-                $this->pdf->text($left, 46, 'label', 8, $label, 0, 2.6, $fg);
-                $this->pdf->rectRgb($left, 56, 26, 2.2, $fg);
-                $ty = 88.0;
+                $this->pdf->text($left, 54, 'label', 8, $label, 0, 2.6, $fg);
+                $this->pdf->rectRgb($left, 66, 26, 2.2, $fg);
+                $ty = 100.0;
                 foreach ($this->wrapText($chapter['title'], 'sans', 22, $width * 0.66) as $line) {
-                    if ($ty > $bandH - 14) {
+                    if ($ty > $bandH - 18) {
                         break;
                     }
                     $this->pdf->text($left, $ty, 'sans', 22, $line, 0, 0, $fg);
@@ -520,11 +552,42 @@ final class PdfComposer
                 // Décalage alterné : barre en tinte claire qui déborde du bloc
                 $flip = $isChapter && $displayNum !== '' && ((int) $displayNum % 2 === 0);
                 if ($flip) {
-                    $this->pdf->rectRgb($this->w * 0.56, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
+                    $this->pdf->rectRgb($this->w * 0.56, $bandH + 12, $this->w * 0.44, 6.5, $this->accentSoft);
                 } else {
-                    $this->pdf->rectRgb(0, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
+                    $this->pdf->rectRgb(0, $bandH + 12, $this->w * 0.44, 6.5, $this->accentSoft);
                 }
-                return $bandH + 42;
+                return $bandH + 46;
+
+            case 'premium2':
+                // Premium doux : panneau ARRONDI en tinte pastel inséré dans la
+                // page, pastille numéro arrondie, titre à l'encre en Montserrat.
+                $inset = 18.0;
+                $bandH = max(196.0, $this->h * 0.29);
+                $this->pdf->roundRectRgb($inset, $inset, $this->w - 2 * $inset, $bandH - $inset, 20.0, $this->accentSoft);
+                if ($isChapter && $displayNum !== '') {
+                    $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
+                    $chip = 56.0;
+                    $chipX = $this->w - $this->marginRight() - $chip;
+                    $chipY = $bandH - $chip - 16;
+                    $this->pdf->roundRectRgb($chipX, $chipY, $chip, $chip, 16.0, $this->accent);
+                    $numW = $this->pdf->width($numText, 'sans2', 24);
+                    $this->pdf->text($chipX + ($chip - $numW) / 2, $chipY + $chip / 2 + 8.5, 'sans2', 24, $numText, 0, 0, $this->reverseInk());
+                }
+                $this->pdf->text($left + 8, 58, 'sans2r', 8, $label, 0, 2.6, $this->accentDark());
+                $this->pdf->roundRectRgb($left + 8, 68, 30, 5, 2.5, $this->accent);
+                $ty = 102.0;
+                foreach ($this->wrapText($chapter['title'], 'sans2', 21, $width * 0.62) as $line) {
+                    if ($ty > $bandH - 22) {
+                        break;
+                    }
+                    $this->pdf->text($left + 8, $ty, 'sans2', 21, $line, 0, 0, $this->ink);
+                    $ty += 27;
+                }
+                // Pastille douce décalée sous le panneau, côté alterné
+                $flip2 = $isChapter && $displayNum !== '' && ((int) $displayNum % 2 === 0);
+                $pw = $this->w * 0.30;
+                $this->pdf->roundRectRgb($flip2 ? $this->w - $inset - $pw : $inset, $bandH + 14, $pw, 7, 3.5, $this->accentMid());
+                return $bandH + 48;
 
             case 'centered':
                 // Composition centrée, filets fins
@@ -578,46 +641,67 @@ final class PdfComposer
         return $y + 24;
     }
 
-    /** Têtes de section premium : trois gabarits qui alternent. */
+    /** Têtes de section premium : quatre gabarits qui alternent (doux = arrondi). */
     private function premiumSectionHead(float $y, string $title, int $num, string $mode): float
     {
         $left = $this->marginLeft();
         $width = $this->textWidth();
+        $sans = $this->sansFont();
+        $lbl = $this->labelFont();
+        $soft = $this->opener === 'premium2';
         $numText = str_pad((string) max(1, $num), 2, '0', STR_PAD_LEFT);
         switch ($mode) {
             case 'feature':
+            case 'solo':
                 // GROS titre pleine largeur, barre accent entrant depuis le bord
-                $y += 16;
-                $this->pdf->rectRgb(0, $y - 7, max(10.0, $left - 9), 9, $this->accent);
-                $this->pdf->text($left, $y + 1, 'label', 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
-                $y += 26;
-                foreach ($this->wrapText($title, 'sans', 17, $width) as $line) {
-                    $this->pdf->text($left, $y, 'sans', 17, $line);
+                $y += 20;
+                if ($soft) {
+                    $this->pdf->roundRectRgb($left, $y - 6, 34, 7, 3.5, $this->accent);
+                    $this->pdf->text($left + 44, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
+                } else {
+                    $this->pdf->rectRgb(0, $y - 7, max(10.0, $left - 9), 9, $this->accent);
+                    $this->pdf->text($left, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
+                }
+                $y += 30;
+                foreach ($this->wrapText($title, $sans, 17, $width) as $line) {
+                    $this->pdf->text($left, $y, $sans, 17, $line);
                     $y += 22;
                 }
-                return $y + 8;
+                return $y + 12;
 
             case 'trio':
                 // Titre compact + filet accent courant jusqu'à la marge
-                $y += 14;
-                $this->pdf->rectRgb($left, $y - 7.5, 8.5, 8.5, $this->accent);
-                $t = $this->fitOneLine($title, 'sans', 11.5, $width * 0.72);
-                $this->pdf->text($left + 15, $y + 0.5, 'sans', 11.5, $t);
-                $tEnd = $left + 15 + $this->pdf->width($t, 'sans', 11.5);
-                if ($tEnd + 14 < $left + $width) {
-                    $this->pdf->rectRgb($tEnd + 10, $y - 2.8, $left + $width - $tEnd - 10, 0.9, $this->accent);
+                $y += 16;
+                if ($soft) {
+                    $this->pdf->roundRectRgb($left, $y - 7.5, 9, 9, 4.5, $this->accent);
+                } else {
+                    $this->pdf->rectRgb($left, $y - 7.5, 8.5, 8.5, $this->accent);
                 }
-                return $y + 20;
+                $t = $this->fitOneLine($title, $sans, 11.5, $width * 0.72);
+                $this->pdf->text($left + 16, $y + 0.5, $sans, 11.5, $t);
+                $tEnd = $left + 16 + $this->pdf->width($t, $sans, 11.5);
+                if ($tEnd + 14 < $left + $width) {
+                    if ($soft) {
+                        $this->pdf->roundRectRgb($tEnd + 10, $y - 3.6, $left + $width - $tEnd - 10, 2.4, 1.2, $this->accentSoft);
+                    } else {
+                        $this->pdf->rectRgb($tEnd + 10, $y - 2.8, $left + $width - $tEnd - 10, 0.9, $this->accent);
+                    }
+                }
+                return $y + 24;
 
             default: // duo — pavé numéroté façon sommaire de magazine
-                $y += 12;
-                $sq = 15.0;
-                $this->pdf->rectRgb($left, $y - 8, $sq, $sq, $this->accent);
-                $numW = $this->pdf->width($numText, 'label', 7);
-                $this->pdf->text($left + ($sq - $numW) / 2, $y + 2.5, 'label', 7, $numText, 0, 0, $this->reverseInk());
-                $t = $this->fitOneLine($title, 'sans', 11.5, $width - $sq - 9);
-                $this->pdf->text($left + $sq + 9, $y + 2.5, 'sans', 11.5, $t);
-                return $y + 24;
+                $y += 14;
+                $sq = 16.0;
+                if ($soft) {
+                    $this->pdf->roundRectRgb($left, $y - 8.5, $sq, $sq, 5.0, $this->accent);
+                } else {
+                    $this->pdf->rectRgb($left, $y - 8.5, $sq, $sq, $this->accent);
+                }
+                $numW = $this->pdf->width($numText, $lbl, 7);
+                $this->pdf->text($left + ($sq - $numW) / 2, $y + 2.5, $lbl, 7, $numText, 0, 0, $this->reverseInk());
+                $t = $this->fitOneLine($title, $sans, 11.5, $width - $sq - 10);
+                $this->pdf->text($left + $sq + 10, $y + 2.5, $sans, 11.5, $t);
+                return $y + 28;
         }
     }
 
@@ -625,22 +709,27 @@ final class PdfComposer
     private function premiumLead(float $y, string $text): float
     {
         $size = 11.8;
-        $lh = 16.6;
-        $width = $this->textWidth() - 16;
+        $lh = 17.4;
+        $width = $this->textWidth() - 18;
         $lines = $this->justify($text, 'body', $size, $width, 0, 0);
         $blockH = count($lines) * $lh;
         if ($blockH > $this->h - $this->top - $this->bottom - 46) {
             return $this->paragraph($y, $text, false);
         }
-        $y = $this->ensureRoom($y, $blockH + 16);
+        $y = $this->ensureRoom($y, $blockH + 18);
         $topY = $y;
         foreach ($lines as $line) {
-            $this->pdf->text($this->marginLeft() + 16 + $line['x'], $y, 'body', $size, $line['text'], $line['tw']);
+            $this->pdf->text($this->marginLeft() + 18 + $line['x'], $y, 'body', $size, $line['text'], $line['tw']);
             $y += $lh;
         }
         $barTop = $topY - $size * 0.76;
-        $this->pdf->rectRgb($this->marginLeft() + 2, $barTop, 3.4, ($y - $lh + 3.5) - $barTop, $this->accent);
-        return $y + 10;
+        $barH = ($y - $lh + 3.5) - $barTop;
+        if ($this->opener === 'premium2') {
+            $this->pdf->roundRectRgb($this->marginLeft() + 2, $barTop, 4.2, $barH, 2.1, $this->accent);
+        } else {
+            $this->pdf->rectRgb($this->marginLeft() + 2, $barTop, 3.4, $barH, $this->accent);
+        }
+        return $y + 14;
     }
 
     /** Chiffre clé premium : GRAND nombre accent + commentaire en regard. */
@@ -652,40 +741,49 @@ final class PdfComposer
         $big = trim($m[1]) . (($m[2] ?? '') !== '' ? ' ' . $m[2] : '');
         $left = $this->marginLeft();
         $width = $this->textWidth();
+        $sans = $this->sansFont();
         $size = 44.0;
-        while ($size > 20 && $this->pdf->width($big, 'sans', $size) > $width * 0.44) {
+        while ($size > 20 && $this->pdf->width($big, $sans, $size) > $width * 0.44) {
             $size *= 0.9;
         }
-        $numW = $this->pdf->width($big, 'sans', $size);
-        $txtX = $left + max($numW, $width * 0.30) + 20;
+        $numW = $this->pdf->width($big, $sans, $size);
+        $txtX = $left + max($numW, $width * 0.30) + 24;
         $txtW = $left + $width - $txtX;
         $lines = $this->wrapText($text, 'body', 9.4, $txtW);
-        $blockH = max($size + 30, 24 + count($lines) * 12.8);
+        $blockH = max($size + 36, 28 + count($lines) * 12.8);
         if ($blockH > $this->h - $this->top - $this->bottom - 36) {
             return $this->callout($y, 'chiffre', $text);
         }
-        $y = $this->ensureRoom($y, $blockH + 20);
-        $y += 10;
-        $this->pdf->rectRgb($left, $y - 2, 30, 2.6, $this->accent);
-        $this->pdf->text($left, $y + 12, 'label', 7.2, 'CHIFFRE CLÉ', 0, 2.4, $this->accentDark());
-        $this->pdf->text($left, $y + 16 + $size * 0.92, 'sans', $size, $big, 0, 0, $this->accent);
-        $ty = $y + 16;
+        $y = $this->ensureRoom($y, $blockH + 26);
+        $y += 14;
+        if ($this->opener === 'premium2') {
+            $this->pdf->roundRectRgb($left, $y - 2, 30, 4, 2, $this->accent);
+        } else {
+            $this->pdf->rectRgb($left, $y - 2, 30, 2.6, $this->accent);
+        }
+        $this->pdf->text($left, $y + 13, $this->labelFont(), 7.2, 'CHIFFRE CLÉ', 0, 2.4, $this->accentDark());
+        $this->pdf->text($left, $y + 18 + $size * 0.92, $sans, $size, $big, 0, 0, $this->accent);
+        $ty = $y + 18;
         foreach ($lines as $line) {
             $this->pdf->text($txtX, $ty, 'body', 9.4, $line);
             $ty += 12.8;
         }
-        return max($y + 20 + $size, $ty + 4) + 12;
+        return max($y + 24 + $size, $ty + 6) + 16;
     }
 
-    /** « À retenir » premium : bandeau réversé PLEINE LARGEUR, bord à bord. */
+    /**
+     * « À retenir » premium : bandeau PLEINE LARGEUR — réversé bord à bord en
+     * Premium, panneau arrondi en tinte pastel en Premium doux.
+     */
     private function premiumBand(float $y, string $kind, string $text): float
     {
         $labels = \App\Core\Util::CALLOUTS;
         $label = mb_strtoupper($labels[$kind] ?? $kind);
+        $soft = $this->opener === 'premium2';
         $left = $this->marginLeft();
         $width = $this->textWidth();
-        $pad = 14.0;
-        $lineH = 13.6;
+        $pad = 20.0;                       // grands aplats = grande respiration
+        $lineH = 13.8;
         $lines = [];
         foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
             if ($i > 0) {
@@ -695,24 +793,31 @@ final class PdfComposer
                 $lines[] = $line;
             }
         }
-        $boxH = 36 + count($lines) * $lineH + 8;
+        $boxH = 46 + count($lines) * $lineH + 10;
         if ($boxH > $this->h - $this->top - $this->bottom - 36) {
             return $this->callout($y, $kind, $text);
         }
-        $y = $this->ensureRoom($y, $boxH + 18);
-        $y += 8;
-        $fg = $this->reverseInk();
-        $this->pdf->rectRgb(0, $y, $this->w, $boxH, $this->accent);
-        $ty = $y + $pad + 5;
-        $this->pdf->text($left + $pad, $ty, 'label', 7.4, $label, 0, 2.6, $fg);
-        $ty += 18;
+        $y = $this->ensureRoom($y, $boxH + 22);
+        $y += 10;
+        if ($soft) {
+            $fg = null;
+            $labelFg = $this->accentDark();
+            $this->pdf->roundRectRgb($left - 12, $y, $width + 24, $boxH, 14.0, $this->accentSoft);
+        } else {
+            $fg = $this->reverseInk();
+            $labelFg = $fg;
+            $this->pdf->rectRgb(0, $y, $this->w, $boxH, $this->accent);
+        }
+        $ty = $y + $pad + 4;
+        $this->pdf->text($left + $pad, $ty, $this->labelFont(), 7.4, $label, 0, 2.6, $labelFg);
+        $ty += 20;
         foreach ($lines as $line) {
             if ($line !== '') {
                 $this->pdf->text($left + $pad, $ty, 'body', 9.8, $line, 0, 0, $fg);
             }
             $ty += $lineH;
         }
-        return $y + $boxH + 14;
+        return $y + $boxH + 18;
     }
 
     /** Sous-titre intra-section (bloc « h » : ancien ### markdown). */
@@ -722,10 +827,12 @@ final class PdfComposer
         $y += 9;
         $left = $this->colX();
         $width = $this->colWidth();
-        $font = in_array($this->opener, ['number', 'band', 'premium'], true) ? 'sans' : 'body';
-        $size = $this->opener === 'premium' ? 10.0 : 11.0;
+        $font = in_array($this->opener, ['number', 'band'], true) ? 'sans' : ($this->isPremium() ? $this->sansFont() : 'body');
+        $size = $this->isPremium() ? 10.0 : 11.0;
         $this->pdf->text($left, $y + 3, $font, $size, $this->fitOneLine($title, $font, $size, $width));
-        if ($this->opener === 'premium') {
+        if ($this->opener === 'premium2') {
+            $this->pdf->roundRectRgb($left, $y + 8.5, 18, 2.6, 1.3, $this->accent);
+        } elseif ($this->opener === 'premium') {
             $this->pdf->rectRgb($left, $y + 8.5, 17, 1.8, $this->accent);
         } elseif ($this->opener === 'editorial') {
             $this->pdf->rectRgb($left, $y + 8.5, 17, 1.2, $this->accent);
@@ -751,7 +858,7 @@ final class PdfComposer
         }
         // En colonnes premium : aucun blanc entre paragraphes (l'alinéa suffit),
         // la grille de lignes de base reste donc parfaitement alignée.
-        $gap = ($this->opener === 'premium' && $this->columns > 1) ? 0.0 : 4.5;
+        $gap = ($this->isPremium() && $this->columns > 1) ? 0.0 : 4.5;
         $this->regionMaxY = max($this->regionMaxY, $y);
         return $y + $gap;
     }
@@ -761,9 +868,9 @@ final class PdfComposer
     {
         $labels = \App\Core\Util::CALLOUTS;
         $label = mb_strtoupper($labels[$kind] ?? $kind);
-        $premium = $this->opener === 'premium';
+        $premium = $this->isPremium();
         $width = $this->colWidth();
-        $pad = $premium ? 10.0 : 12.0;
+        $pad = $premium ? 16.0 : 12.0;      // les aplats premium respirent
         $bodyFontSize = $premium ? 8.8 : 9.6;
         $innerW = $width - 2 * $pad - ($premium ? 0 : 6);
 
@@ -776,8 +883,8 @@ final class PdfComposer
                 $lines[] = $line;
             }
         }
-        $lineH = $premium ? 12.2 : 13.4;
-        $boxH = 30 + count($lines) * $lineH + $pad * 0.7;
+        $lineH = $premium ? 12.6 : 13.4;
+        $boxH = ($premium ? 38 : 30) + count($lines) * $lineH + $pad * 0.7;
 
         if ($boxH > $this->h - $this->top - $this->bottom - 20) {
             return $this->paragraph($y, ($labels[$kind] ?? $kind) . ' — ' . str_replace("\n", ' ', $text), false);
@@ -793,6 +900,10 @@ final class PdfComposer
             $this->pdf->rectRgb($left, $y, $width, 0.6, $this->ink);
             $this->pdf->rectRgb($left, $y + $boxH, $width, 0.6, $this->ink);
             $tx = $left + 2;
+        } elseif ($this->opener === 'premium2') {
+            // Premium doux : boîte ARRONDIE en tinte pastel, texte encre
+            $this->pdf->roundRectRgb($left, $y, $width, $boxH, 10.0, $this->accentSoft);
+            $tx = $left + $pad;
         } elseif ($premium) {
             // Premium : encart en APLAT accent, texte réversé — l'esprit magazine
             $this->pdf->rectRgb($left, $y, $width, $boxH, $this->accent);
@@ -804,9 +915,9 @@ final class PdfComposer
             $this->pdf->rectRgb($left, $y, 3.4, $boxH, $this->accent);
             $tx = $left + $pad + 6;
         }
-        $ty = $y + $pad + 3;
-        $this->pdf->text($tx, $ty, 'label', 7.2, $label, 0, 2.0, $labelFg);
-        $ty += 17;
+        $ty = $y + $pad + ($premium ? 1 : 3);
+        $this->pdf->text($tx, $ty, $this->labelFont(), 7.2, $label, 0, 2.0, $labelFg);
+        $ty += $premium ? 19 : 17;
         foreach ($lines as $line) {
             if ($line !== '') {
                 $this->pdf->text($tx, $ty, 'body', $bodyFontSize, $line, 0, 0, $fg);
@@ -877,11 +988,11 @@ final class PdfComposer
             $this->centerText($this->top - 14, 'italic', 8.5, $text, $this->gray);
             return;
         }
-        $text = mb_strtoupper($this->fitOneLine($text, 'label', 6.6, $this->textWidth() * 0.72));
+        $text = mb_strtoupper($this->fitOneLine($text, $this->labelFont(), 6.6, $this->textWidth() * 0.72));
         $x = $isRecto
-            ? $this->w - $this->marginRight() - $this->pdf->width($text, 'label', 6.6, 1.4)
+            ? $this->w - $this->marginRight() - $this->pdf->width($text, $this->labelFont(), 6.6, 1.4)
             : $this->marginLeft();
-        $this->pdf->text($x, $this->top - 14, 'label', 6.6, $text, 0, 1.4, $this->gray);
+        $this->pdf->text($x, $this->top - 14, $this->labelFont(), 6.6, $text, 0, 1.4, $this->gray);
     }
 
     private function drawFolio(): void
@@ -1259,6 +1370,33 @@ final class MiniPdf
             "%.3F %.3F %.3F rg %.2F %.2F %.2F %.2F re f 0 g\n",
             $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255, $x, $this->h - $y - $h, $w, $h
         );
+    }
+
+    /** Rectangle à ANGLES ARRONDIS plein (courbes de Bézier), couleur RVB. */
+    public function roundRectRgb(float $x, float $y, float $w, float $h, float $r, array $rgb): void
+    {
+        $r = min($r, $w / 2, $h / 2);
+        if ($r < 0.5) {
+            $this->rectRgb($x, $y, $w, $h, $rgb);
+            return;
+        }
+        $k = 0.5523 * $r;
+        $x0 = $x;
+        $y0 = $this->h - $y - $h;   // coin bas-gauche en coordonnées PDF
+        $x1 = $x + $w;
+        $y1 = $this->h - $y;
+        $f = fn (float $v): string => sprintf('%.2F', $v);
+        $this->current .= sprintf('%.3F %.3F %.3F rg ', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255)
+            . $f($x0 + $r) . ' ' . $f($y0) . " m "
+            . $f($x1 - $r) . ' ' . $f($y0) . " l "
+            . $f($x1 - $r + $k) . ' ' . $f($y0) . ' ' . $f($x1) . ' ' . $f($y0 + $r - $k) . ' ' . $f($x1) . ' ' . $f($y0 + $r) . " c "
+            . $f($x1) . ' ' . $f($y1 - $r) . " l "
+            . $f($x1) . ' ' . $f($y1 - $r + $k) . ' ' . $f($x1 - $r + $k) . ' ' . $f($y1) . ' ' . $f($x1 - $r) . ' ' . $f($y1) . " c "
+            . $f($x0 + $r) . ' ' . $f($y1) . " l "
+            . $f($x0 + $r - $k) . ' ' . $f($y1) . ' ' . $f($x0) . ' ' . $f($y1 - $r + $k) . ' ' . $f($x0) . ' ' . $f($y1 - $r) . " c "
+            . $f($x0) . ' ' . $f($y0 + $r) . " l "
+            . $f($x0) . ' ' . $f($y0 + $r - $k) . ' ' . $f($x0 + $r - $k) . ' ' . $f($y0) . ' ' . $f($x0 + $r) . ' ' . $f($y0) . " c "
+            . "f 0 g\n";
     }
 
     public function image(string $name, float $x, float $y, float $w, float $h): void

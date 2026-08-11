@@ -206,6 +206,15 @@ final class Router
                 Toc::validate(self::project((int) $project['id'], $userId));
                 Http::ok(['project' => self::project((int) $project['id'], $userId)]);
 
+            case 'toc/add-chapter':
+                // « Ajoute un chapitre sur… » — à tout moment, même livre rédigé
+                Http::requirePost();
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $result = Toc::addChapter($project, self::selectedConceptOrNull($project), (string) Http::in('request', ''));
+                $result['project'] = self::project((int) $project['id'], $userId);
+                Http::ok($result);
+
             // ── Étape 4 : couverture ──
             case 'covers/get':
                 $project = self::project((int) Http::in('id'), $userId);
@@ -538,6 +547,40 @@ final class Router
             case 'images/upload':
                 self::uploadImage($userId);
 
+            case 'images/generate':
+                // Visuel généré par l'IA (nano banana) pour un emplacement du
+                // livre, avec prompt libre et regénérations à volonté.
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $imageId = (int) Http::in('image_id');
+                $slotRow = Db::one('SELECT * FROM images WHERE id = ? AND project_id = ?', [$imageId, (int) $project['id']]);
+                if (!$slotRow) {
+                    Http::error('Emplacement visuel introuvable.');
+                }
+                $chapterRow = Db::one(
+                    "SELECT title FROM chapters WHERE project_id = ? AND num = ?",
+                    [(int) $project['id'], (int) $slotRow['chapter_num']]
+                );
+                $style = match ((string) ($project['photo_style'] ?? 'nb')) {
+                    'couleur' => 'Photographie professionnelle réaliste en couleurs, lumière naturelle soignée.',
+                    'schemas' => 'Schéma pédagogique épuré en flat design, fond blanc, traits nets, sans texte superflu.',
+                    default   => 'Photographie professionnelle réaliste en noir et blanc, éclairage travaillé, contrastes riches.',
+                };
+                $refine = trim((string) Http::in('prompt', ''));
+                $prompt = "Illustration intérieure pour un livre pratique intitulé « " . ($project['title'] ?: 'Livre') . " »"
+                    . ($chapterRow ? ", chapitre « {$chapterRow['title']} »" : '') . ".\n"
+                    . "Sujet du visuel : " . ((string) $slotRow['caption'] !== '' ? $slotRow['caption'] : 'illustration du chapitre') . ".\n"
+                    . $style . "\n"
+                    . "Cadrage horizontal 3:2, composition claire, adaptée à une impression 300 dpi. Aucun texte incrusté dans l'image."
+                    . ($refine !== '' ? "\nExigences précises de l'auteur (prioritaires) : " . $refine : '');
+                $binary = \App\Services\Gemini::image($prompt);
+                $source = @imagecreatefromstring($binary);
+                if (!$source) {
+                    Http::error("L'image générée est illisible — relancez.");
+                }
+                Http::ok(['image' => self::storeSlotImage($project, $slotRow, $source)]);
+
             // ── Étape 7 : mise en page & publication ──
             case 'layout/summary':
                 $project = self::project((int) Http::in('id'), $userId);
@@ -835,11 +878,6 @@ final class Router
             Http::error('Format accepté : JPEG, PNG ou WebP.');
         }
 
-        $dir = (string) Config::get('paths.uploads');
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
-        // Conversion en JPEG qualité maximale (incorporation PDF + poids maîtrisé)
         $source = match ($info[2]) {
             IMAGETYPE_JPEG => imagecreatefromjpeg($file['tmp_name']),
             IMAGETYPE_PNG  => imagecreatefrompng($file['tmp_name']),
@@ -848,15 +886,44 @@ final class Router
         if (!$source) {
             Http::error('Image illisible.');
         }
-        $name = 'p' . $project['id'] . '-img' . $imageId . '-' . substr(bin2hex(random_bytes(6)), 0, 8) . '.jpg';
-        $canvas = imagecreatetruecolor(imagesx($source), imagesy($source));
+        Http::ok(['image' => self::storeSlotImage($project, $slotRow, $source)]);
+    }
+
+    /**
+     * Enregistre un visuel dans son emplacement : recadrage central au format
+     * 3:2 de la maquette (aucune déformation dans le PDF), conversion JPEG,
+     * niveaux de gris si le style choisi à l'étape 03 n'est pas « couleur ».
+     */
+    private static function storeSlotImage(array $project, array $slotRow, \GdImage $source): array
+    {
+        $dir = (string) Config::get('paths.uploads');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        $sw = imagesx($source);
+        $sh = imagesy($source);
+        // Recadrage central au ratio 3:2 (celui des emplacements de la maquette)
+        $targetRatio = 3 / 2;
+        if ($sw / $sh > $targetRatio) {
+            $cw = (int) round($sh * $targetRatio);
+            $ch = $sh;
+            $cx = (int) (($sw - $cw) / 2);
+            $cy = 0;
+        } else {
+            $cw = $sw;
+            $ch = (int) round($sw / $targetRatio);
+            $cx = 0;
+            $cy = (int) (($sh - $ch) / 2);
+        }
+        $canvas = imagecreatetruecolor($cw, $ch);
         imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
-        imagecopy($canvas, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
+        imagecopy($canvas, $source, 0, 0, $cx, $cy, $cw, $ch);
         // Style visuel choisi à l'étape 03 : N&B et schémas passent en niveaux
         // de gris (fidèle à la spec annoncée et à l'impression KDP encre noire)
         if (($project['photo_style'] ?? 'nb') !== 'couleur') {
             imagefilter($canvas, IMG_FILTER_GRAYSCALE);
         }
+        $name = 'p' . $project['id'] . '-img' . (int) $slotRow['id'] . '-' . substr(bin2hex(random_bytes(6)), 0, 8) . '.jpg';
         imagejpeg($canvas, $dir . '/' . $name, 92);
         imagedestroy($source);
         imagedestroy($canvas);
@@ -864,8 +931,8 @@ final class Router
         if (!empty($slotRow['filename']) && is_file($dir . '/' . $slotRow['filename'])) {
             @unlink($dir . '/' . $slotRow['filename']);
         }
-        Db::run('UPDATE images SET filename = ?, width = ?, height = ? WHERE id = ?', [$name, $info[0], $info[1], $imageId]);
-        Http::ok(['image' => Db::one('SELECT * FROM images WHERE id = ?', [$imageId])]);
+        Db::run('UPDATE images SET filename = ?, width = ?, height = ? WHERE id = ?', [$name, $cw, $ch, (int) $slotRow['id']]);
+        return Db::one('SELECT * FROM images WHERE id = ?', [(int) $slotRow['id']]) ?: $slotRow;
     }
 
     private static function download(string $file, string $downloadName, string $mime, bool $inline = false): never

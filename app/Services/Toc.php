@@ -105,6 +105,19 @@ final class Toc
             throw new \RuntimeException('Générez d’abord un sommaire.');
         }
         $projectId = (int) $project['id'];
+
+        // GARDE-FOU : dès qu'une section est rédigée, la validation ne détruit
+        // plus rien — elle SYNCHRONISE (nouveaux chapitres ajoutés, titres
+        // alignés, contenu écrit et visuels préservés à l'identique).
+        $written = Db::one(
+            "SELECT COUNT(*) AS n FROM sections s JOIN chapters c ON c.id = s.chapter_id
+             WHERE c.project_id = ? AND s.status = 'done'",
+            [$projectId]
+        );
+        if ((int) $written['n'] > 0) {
+            self::syncValidatedToc($project, $toc);
+            return;
+        }
         $wordsTotal = (int) $project['pages'] * (int) Config::get('writing.words_per_page', 285);
         $perChapter = (int) round($wordsTotal / count($toc));
         $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
@@ -251,6 +264,29 @@ final class Toc
         }
 
         // Livre déjà structuré : insertion réelle avant la conclusion
+        $displayNum = self::insertLiveChapter($project, $entry);
+        Util::journal($projectId, 'ok', 'Chapitre ' . $displayNum . ' inséré à la demande : « ' . $title . ' » — à rédiger à l\'étape 05');
+        return ['live' => true, 'toc' => $draft, 'title' => $title];
+    }
+
+    /**
+     * Insère UN chapitre (titre + sous-parties + emplacements visuels) dans un
+     * livre déjà structuré, juste avant la conclusion, sans rien toucher au
+     * contenu existant. Retourne le numéro affiché du chapitre.
+     */
+    private static function insertLiveChapter(array $project, array $entry): int
+    {
+        $projectId = (int) $project['id'];
+        $title = mb_substr(trim((string) ($entry['title'] ?? 'Chapitre')), 0, 250);
+        $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
+        $parts = array_slice(array_values((array) ($entry['parts'] ?? [])), 0, $sectionsPer);
+        while (count($parts) < $sectionsPer) {
+            $parts[] = 'Partie ' . (count($parts) + 1);
+        }
+        $visuals = array_values((array) ($entry['visuals'] ?? []));
+        if (!empty($project['photos']) && !$visuals) {
+            $visuals = array_fill(0, max(1, (int) $project['photos_per']), ['caption' => 'Visuel du chapitre — ' . $title, 'desc' => '']);
+        }
         $last = Db::one("SELECT COALESCE(MAX(num), 1) AS n FROM chapters WHERE project_id = ? AND role = 'chapter'", [$projectId]);
         $num = (int) $last['n'] + 1;
         $avg = Db::one("SELECT COALESCE(ROUND(AVG(target_words)), 2000) AS w FROM chapters WHERE project_id = ? AND role = 'chapter'", [$projectId]);
@@ -267,7 +303,7 @@ final class Toc
             foreach ($parts as $s => $partTitle) {
                 Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$chapterId, $s + 1, $partTitle]);
             }
-            foreach (($entry['visuals'] ?? []) as $slotIndex => $visual) {
+            foreach ($visuals as $slotIndex => $visual) {
                 Db::run(
                     'INSERT INTO images (project_id, chapter_num, slot, caption, spec, created_at) VALUES (?,?,?,?,?,?)',
                     [
@@ -288,8 +324,142 @@ final class Toc
             $pdo->rollBack();
             throw $e;
         }
-        Util::journal($projectId, 'ok', 'Chapitre ' . ($num - 1) . ' inséré à la demande : « ' . $title . ' » — à rédiger à l\'étape 05');
-        return ['live' => true, 'toc' => $draft, 'title' => $title];
+        return $num - 1;
+    }
+
+    /**
+     * Validation d'un sommaire sur un livre DÉJÀ rédigé : synchronisation
+     * douce. Les chapitres existants (et leur contenu) sont préservés ; les
+     * entrées inconnues du brouillon deviennent de nouveaux chapitres ; si le
+     * brouillon compte autant d'entrées que le livre, les écarts de titres
+     * sont traités comme des renommages. Rien n'est jamais supprimé.
+     */
+    private static function syncValidatedToc(array $project, array $toc): void
+    {
+        $projectId = (int) $project['id'];
+        $existing = Db::all(
+            "SELECT id, num, title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num",
+            [$projectId]
+        );
+        $pool = $existing;
+        $toInsert = [];
+        foreach ($toc as $entry) {
+            $title = mb_strtolower(trim((string) ($entry['title'] ?? '')));
+            $foundKey = null;
+            foreach ($pool as $k => $chapter) {
+                if (mb_strtolower(trim((string) $chapter['title'])) === $title) {
+                    $foundKey = $k;
+                    break;
+                }
+            }
+            if ($foundKey !== null) {
+                unset($pool[$foundKey]);
+            } else {
+                $toInsert[] = $entry;
+            }
+        }
+
+        if (count($toc) === count($existing) && $toInsert) {
+            // Mêmes chapitres, titres retouchés : alignement par position
+            foreach (array_values($toc) as $i => $entry) {
+                $t = mb_substr(trim((string) ($entry['title'] ?? '')), 0, 250);
+                if ($t !== '' && isset($existing[$i]) && $t !== trim((string) $existing[$i]['title'])) {
+                    Db::run('UPDATE chapters SET title = ? WHERE id = ?', [$t, (int) $existing[$i]['id']]);
+                }
+            }
+            Util::journal($projectId, 'ok', 'Sommaire synchronisé : titres mis à jour · contenu rédigé intact');
+        } elseif ($toInsert) {
+            foreach ($toInsert as $entry) {
+                self::insertLiveChapter($project, $entry);
+            }
+            Util::journal($projectId, 'ok', 'Sommaire synchronisé : ' . count($toInsert) . ' chapitre(s) ajouté(s) · contenu rédigé intact');
+        } else {
+            Util::journal($projectId, 'dim', 'Sommaire déjà à jour : contenu rédigé intact');
+        }
+
+        self::syncImageSlots($project, $toc);
+        Db::run('UPDATE projects SET step = GREATEST(step, 4), updated_at = ? WHERE id = ?', [Db::now(), $projectId]);
+    }
+
+    /**
+     * Aligne les emplacements visuels sur les réglages ACTUELS (photos on/off,
+     * nombre par chapitre, style) sans jamais réécrire le texte : activer les
+     * photos après rédaction ajoute juste les emplacements — seule la mise en
+     * page change, zéro appel d'IA de rédaction.
+     */
+    private static function syncImageSlots(array $project, array $toc): void
+    {
+        $projectId = (int) $project['id'];
+        $photos = !empty($project['photos']);
+        $photosPer = max(1, (int) $project['photos_per']);
+        $spec = self::imageSpec($project);
+
+        $visualsByTitle = [];
+        foreach ($toc as $entry) {
+            $visualsByTitle[mb_strtolower(trim((string) ($entry['title'] ?? '')))] = array_values((array) ($entry['visuals'] ?? []));
+        }
+
+        $added = 0;
+        $removed = 0;
+        $chapters = Db::all(
+            "SELECT num, title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num",
+            [$projectId]
+        );
+        foreach ($chapters as $chapter) {
+            $num = (int) $chapter['num'];
+            $slots = Db::all(
+                'SELECT id, slot, filename FROM images WHERE project_id = ? AND chapter_num = ? ORDER BY slot',
+                [$projectId, $num]
+            );
+            if (!$photos) {
+                // Photos désactivées : on retire les emplacements VIDES, jamais
+                // une image déjà fournie ou générée.
+                foreach ($slots as $slot) {
+                    if (empty($slot['filename'])) {
+                        Db::run('DELETE FROM images WHERE id = ?', [(int) $slot['id']]);
+                        $removed++;
+                    }
+                }
+                continue;
+            }
+            // Emplacements vides au-delà du nombre demandé : retirés
+            foreach ($slots as $slot) {
+                if ((int) $slot['slot'] > $photosPer && empty($slot['filename'])) {
+                    Db::run('DELETE FROM images WHERE id = ?', [(int) $slot['id']]);
+                    $removed++;
+                }
+            }
+            // Spec (style/format) rafraîchie sur les emplacements encore vides
+            Db::run(
+                "UPDATE images SET spec = ? WHERE project_id = ? AND chapter_num = ? AND (filename IS NULL OR filename = '')",
+                [$spec, $projectId, $num]
+            );
+            $have = [];
+            foreach ($slots as $slot) {
+                if ((int) $slot['slot'] <= $photosPer || !empty($slot['filename'])) {
+                    $have[] = (int) $slot['slot'];
+                }
+            }
+            $visuals = $visualsByTitle[mb_strtolower(trim((string) $chapter['title']))] ?? [];
+            for ($n = 1; $n <= $photosPer; $n++) {
+                if (in_array($n, $have, true)) {
+                    continue;
+                }
+                $visual = $visuals[$n - 1] ?? null;
+                $caption = $visual
+                    ? trim((string) ($visual['caption'] ?? '') . (!empty($visual['desc']) ? ' — ' . $visual['desc'] : ''))
+                    : ('Visuel du chapitre — ' . $chapter['title']);
+                Db::run(
+                    'INSERT INTO images (project_id, chapter_num, slot, caption, spec, created_at) VALUES (?,?,?,?,?,?)',
+                    [$projectId, $num, $n, $caption, $spec, Db::now()]
+                );
+                $added++;
+            }
+        }
+        if ($added || $removed) {
+            Util::journal($projectId, 'ok', 'Visuels synchronisés : ' . $added . ' emplacement(s) ajouté(s)'
+                . ($removed ? ', ' . $removed . ' retiré(s)' : '') . ' · texte rédigé intact, zéro réécriture');
+        }
     }
 
     public static function imageSpec(array $project): string

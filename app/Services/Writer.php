@@ -162,6 +162,15 @@ final class Writer
             $checkpoint = 'ch' . $current['num'] . ' §' . ($nextSection['num'] ?? 1);
         }
 
+        // Pagination indicative en direct (le PDF final et le champ
+        // « Pages définitives » restent la référence pour les exports)
+        $figures = 0;
+        if (!empty($project['photos'])) {
+            $f = Db::one('SELECT COUNT(*) AS n FROM images WHERE project_id = ?', [$projectId]);
+            $figures = (int) $f['n'];
+        }
+        $pagesEst = $wordsDone > 0 ? Layout::estimatePages($wordsDone, count($chapters), $figures) : 0;
+
         $secondsPer = (int) Config::get('writing.seconds_per_section', 40);
         $chaptersOut = array_map(fn ($c) => [
             'num'           => (int) $c['num'],
@@ -176,6 +185,7 @@ final class Writer
             'writing_status' => $project['writing_status'],
             'progress'       => $progress,
             'words_done'     => $wordsDone,
+            'pages_est'      => $pagesEst,
             'chapter_current'=> $current ? (int) $current['num'] : count($chapters),
             'chapter_total'  => count($chapters),
             'eta_min'        => (int) max(1, ceil(($sectionsTotal - $sectionsDone) * $secondsPer / 60)),

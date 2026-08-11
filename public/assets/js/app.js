@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-10 · c10';
+  const BUILD = '2026-08-10 · c11';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -771,7 +771,10 @@
             </div>
             <div class="progress-track"><div class="progress-fill" style="width:${st.progress}%"></div></div>
             <div class="run-stats">
-              <div><div class="k">Mots écrits</div><div class="v">${nf(st.words_done)}</div></div>
+              <div>
+                <div class="k">Mots écrits</div><div class="v">${nf(st.words_done)}</div>
+                ${st.pages_est ? `<div style="font-size:11.5px; opacity:.65; margin-top:3px;">≈ ${nf(st.pages_est)} pages<span style="opacity:.7;"> (indicatif)</span></div>` : ''}
+              </div>
               <div><div class="k">Chapitre</div><div class="v">${st.chapter_current} / ${st.chapter_total}</div></div>
               <div><div class="k">Temps restant</div><div class="v">${done ? '—' : st.eta_min + ' min'}</div></div>
               <div><div class="k">Point de contrôle</div><div class="v">${esc(st.checkpoint)}</div></div>
@@ -917,7 +920,7 @@
         <div class="head">
           <div class="kicker mono" style="font-size:10.5px;">Étape 06 — Relecture</div>
           <div class="book-title">${esc(concept ? concept.title : p.title)}</div>
-          <div class="meta">${chapters.length} chapitres · ${nf(totalWords)} mots · ${p.pages} p.</div>
+          <div class="meta">${chapters.length} chapitres · ${nf(totalWords)} mots${st && st.pages_est ? ' · ≈ ' + st.pages_est + ' p.' : ''}</div>
         </div>
         ${chapters.map(c => `
         <div class="reader-nav-item ${S.reader.num === c.num ? 'on' : ''}" onclick="App.openChapter(${c.num})">

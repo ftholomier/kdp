@@ -72,6 +72,24 @@ final class Layout
         if (!empty($project['final_pages'])) {
             return max(24, min(828, (int) $project['final_pages']));
         }
+        return self::pagesFromContent($project);
+    }
+
+    /**
+     * Estimation de pagination à partir des mots écrits : liminaires (8) +
+     * corps (285 mots/page) + ouvertures de chapitre sur belle page +
+     * emplacements visuels (≈ ½ page chacun). Arrondie à la page paire.
+     */
+    public static function estimatePages(int $words, int $chapterCount, int $figureSlots): int
+    {
+        $wpp = (int) Config::get('writing.words_per_page', 285);
+        $pages = 8 + (int) ceil($words / max(1, $wpp)) + $chapterCount + (int) round($figureSlots * 0.5);
+        $pages = max(24, $pages);
+        return $pages + ($pages % 2);
+    }
+
+    private static function pagesFromContent(array $project): int
+    {
         $row = Db::one(
             "SELECT COALESCE(SUM(s.words),0) AS w, COUNT(DISTINCT c.id) AS chapters
              FROM chapters c LEFT JOIN sections s ON s.chapter_id = c.id AND s.status = 'done'
@@ -82,16 +100,12 @@ final class Layout
         if ($words === 0) {
             return (int) $project['pages'];
         }
-        $wpp = (int) Config::get('writing.words_per_page', 285);
-        $frontMatter = 8;
-        $chapterOpeners = (int) ($row['chapters'] ?? 0); // ouverture sur belle page
         $figures = 0;
         if (!empty($project['photos'])) {
             $f = Db::one('SELECT COUNT(*) AS n FROM images WHERE project_id = ?', [(int) $project['id']]);
-            $figures = (int) round(((int) $f['n']) * 0.5);
+            $figures = (int) $f['n'];
         }
-        $pages = $frontMatter + (int) ceil($words / $wpp) + $chapterOpeners + $figures;
-        return max(24, $pages + ($pages % 2)); // pagination paire
+        return self::estimatePages($words, (int) ($row['chapters'] ?? 0), $figures);
     }
 
     public static function summary(array $project, ?array $concept): array

@@ -451,6 +451,41 @@ final class CoverStudio
     }
 
     /**
+     * Couleur de la tranche : celle du fond plein de la 1ère de couverture
+     * (élément « fond » couvrant toute la face, y compris si l'utilisateur
+     * l'a personnalisé dans l'éditeur), sinon la couleur c1 de la palette.
+     * Garantit une tranche du MÊME aplat que la face adjacente : aucun
+     * « débordement » visible au pli, même avec la variance d'impression KDP.
+     */
+    public static function spineHex(array $frontEls, array $palette): string
+    {
+        foreach ($frontEls as $el) {
+            if (($el['type'] ?? '') === 'rect'
+                && (float) ($el['x'] ?? 100) <= 0.5 && (float) ($el['y'] ?? 100) <= 0.5
+                && (float) ($el['w'] ?? 0) >= 99 && (float) ($el['h'] ?? 0) >= 99) {
+                return (string) ($el['color'] ?? ($palette['c1'] ?? '#1B2A4A'));
+            }
+        }
+        return (string) ($palette['c1'] ?? '#1B2A4A');
+    }
+
+    /** Couleur de texte lisible sur la tranche (contraste automatique). */
+    public static function spineTextHex(string $bgHex, array $palette): string
+    {
+        $hex = ltrim($bgHex, '#');
+        if (strlen($hex) === 3) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        $r = (int) hexdec(substr($hex, 0, 2));
+        $g = (int) hexdec(substr($hex, 2, 2));
+        $b = (int) hexdec(substr($hex, 4, 2));
+        $luma = 0.299 * $r + 0.587 * $g + 0.114 * $b;
+        return $luma > 165
+            ? (string) ($palette['c4'] ?? '#12203A')
+            : (string) ($palette['c3'] ?? '#F4EFE4');
+    }
+
+    /**
      * Couverture broché complète — 4ème + tranche + 1ère en UNE image
      * 300 dpi, fond perdu compris : le gabarit exact attendu par KDP.
      *
@@ -470,11 +505,13 @@ final class CoverStudio
         $totalH = $mmToPx($trimH + 2 * $bleed);
         $panelW = $mmToPx($trimW + $bleed);   // chaque face déborde dans le fond perdu extérieur
         $panelH = $totalH;
+        $frontX = $totalW - $panelW;          // bord gauche exact de la 1ère de couverture
         $spineW = $mmToPx($spine);
 
+        $spineHex = self::spineHex($frontEls, $palette);
         $wrap = imagecreatetruecolor($totalW, $totalH);
-        $c1 = self::alloc($wrap, (string) ($palette['c1'] ?? '#1B2A4A'));
-        imagefilledrectangle($wrap, 0, 0, $totalW, $totalH, $c1);
+        $spineBg = self::alloc($wrap, $spineHex);
+        imagefilledrectangle($wrap, 0, 0, $totalW, $totalH, $spineBg);
 
         // Faces composées DIRECTEMENT aux dimensions du panneau (aucun
         // recadrage : rien ne peut être rogné, ni titre ni texte de 4ème)
@@ -483,14 +520,17 @@ final class CoverStudio
         imagedestroy($back);
 
         $front = self::renderElements($frontEls, $illustrationPath, $panelW, $panelH);
-        imagecopy($wrap, $front, $totalW - $panelW, 0, 0, 0, $panelW, $panelH);
+        imagecopy($wrap, $front, $frontX, 0, 0, 0, $panelW, $panelH);
         imagedestroy($front);
 
-        // Tranche : fond + titre/auteur verticaux si assez épaisse (règle KDP ≈ 6,35 mm)
+        // Tranche : aplat STRICTEMENT uni couvrant tout l'espace entre les deux
+        // faces (les arrondis mm→px ne peuvent laisser ni jour ni chevauchement),
+        // dessiné APRÈS les faces pour que rien ne déborde dans cette zone.
+        // Titre/auteur verticaux si assez épaisse (règle KDP ≈ 6,35 mm).
         $spineX = $panelW;
-        imagefilledrectangle($wrap, $spineX, 0, $spineX + $spineW, $totalH, $c1);
+        imagefilledrectangle($wrap, $spineX, 0, max($spineX + $spineW, $frontX) - 1, $totalH, $spineBg);
         if ($spine >= 6.35) {
-            $c3 = self::alloc($wrap, (string) ($palette['c3'] ?? '#F4EFE4'));
+            $c3 = self::alloc($wrap, self::spineTextHex($spineHex, $palette));
             $label = trim((string) ($texts['title'] ?? ''));
             $author = mb_strtoupper(trim((string) ($texts['author'] ?? '')));
             $font = self::fontFile('instrument-serif');

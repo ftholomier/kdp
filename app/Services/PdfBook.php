@@ -25,6 +25,7 @@ final class PdfBook
         'moderne'   => ['name' => 'Contemporain', 'desc' => 'Titres Poppins, grands numéros de chapitre colorés.'],
         'magazine'  => ['name' => 'Magazine',     'desc' => 'Bandeaux pleine largeur, titres Bebas Neue impactants.'],
         'elegant'   => ['name' => 'Élégant',      'desc' => 'DM Serif centré, ornements minimaux, grande respiration.'],
+        'premium'   => ['name' => 'Premium',      'desc' => 'Esprit grand magazine : 2 colonnes, encarts en aplat, sections numérotées.'],
     ];
 
     public static function build(array $project, array $book, string $theme = 'editorial', string $accent = '#C4571F'): string
@@ -73,8 +74,16 @@ final class PdfComposer
     private float $titleSize = 21.0;
     private string $opener = 'editorial';  // style d'ouverture de chapitre
 
+    // Composition en colonnes (thème premium : corps sur 2 colonnes)
+    private int $columns = 1;
+    private float $colGap = 16.0;
+    private int $col = 0;
+    private float $colTop = 0.0;
+
     private const BODY_SIZE = 10.8;
     private const LEADING   = 15.4;
+    private float $bodySize = self::BODY_SIZE;
+    private float $leading = self::LEADING;
 
     public function __construct(
         private array $geometry,
@@ -98,8 +107,14 @@ final class PdfComposer
             'moderne'  => ['sans', 18.0, 'number'],
             'magazine' => ['display', 26.0, 'band'],
             'elegant'  => ['display2', 21.0, 'centered'],
+            'premium'  => ['sans', 20.0, 'premium'],
             default    => ['body', 21.0, 'editorial'],
         };
+        if ($theme === 'premium') {
+            $this->columns = 2;
+            $this->bodySize = 9.4;     // densité magazine sur colonne étroite
+            $this->leading = 13.2;
+        }
 
         $this->pdf = $this->newPdf();
     }
@@ -170,6 +185,11 @@ final class PdfComposer
             case 'number':
                 $this->pdf->rectRgb(($this->w - 26) / 2, $y - 48, 26, 26, $this->accent);
                 break;
+            case 'premium':
+                // Aplat décalé partant du bord — signature magazine
+                $this->pdf->rectRgb(0, $y - 58, $this->w * 0.36, 13, $this->accent);
+                $this->pdf->rectRgb($this->w * 0.36 + 6, $y - 58, 13, 13, $this->accentSoft);
+                break;
             case 'centered':
                 $this->pdf->rectRgb(($this->w - 60) / 2, $y - 40, 60, 0.8, $this->ink);
                 break;
@@ -207,6 +227,8 @@ final class PdfComposer
         $center($this->top + 42, $this->titleFont, 20, 'Sommaire');
         if ($this->opener === 'editorial' || $this->opener === 'centered') {
             $this->pdf->rectRgb(($this->w - 36) / 2, $this->top + 54, 36, 1.4, $this->accent);
+        } elseif ($this->opener === 'premium') {
+            $this->pdf->rectRgb(($this->w - 44) / 2, $this->top + 52, 44, 4, $this->accent);
         }
         $y = $this->top + 92;
         foreach ($this->book['chapters'] as $chapter) {
@@ -253,14 +275,16 @@ final class PdfComposer
             $this->newPage('opener');
             $this->chapterStarts[$chapter['num']] = $this->pageNum;
 
+            $this->col = 0;
             $y = $this->chapterOpener($chapter);
+            $this->colTop = $y;
             $this->drawFolio();
 
             $imagesPlaced = false;
             foreach ($chapter['sections'] as $sIndex => $section) {
                 if ($sIndex > 0) {
-                    $y = $this->ensureRoom($y, 3 * self::LEADING + 34);
-                    $y = $this->sectionHead($y, $section['title']);
+                    $y = $this->ensureRoom($y, 3 * $this->leading + 34);
+                    $y = $this->sectionHead($y, $section['title'], $sIndex);
                 }
                 $blocks = !empty($section['blocks'])
                     ? $section['blocks']
@@ -329,6 +353,31 @@ final class PdfComposer
                 $this->pdf->rectRgb($left, $y + 4, 34, 2.6, $this->accent);
                 return $y + 30;
 
+            case 'premium':
+                // Grand aplat de couleur, numéro géant en tinte, titre réversé,
+                // barre décalée sous le bloc — l'esprit brochure de magazine.
+                $bandH = max(168.0, $this->h * 0.265);
+                $fg = $this->reverseInk();
+                $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
+                if ($isChapter && $displayNum !== '') {
+                    $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
+                    $numW = $this->pdf->width($numText, 'sans', 64);
+                    $this->pdf->text($this->w - $this->marginRight() - $numW, $bandH - 22, 'sans', 64, $numText, 0, 0, $this->accentMid());
+                }
+                $this->pdf->text($left, 46, 'label', 8, $label, 0, 2.6, $fg);
+                $this->pdf->rectRgb($left, 56, 26, 2.2, $fg);
+                $ty = 84.0;
+                foreach ($this->wrapText($chapter['title'], 'sans', 20, $width * 0.68) as $line) {
+                    if ($ty > $bandH - 14) {
+                        break;
+                    }
+                    $this->pdf->text($left, $ty, 'sans', 20, $line, 0, 0, $fg);
+                    $ty += 26;
+                }
+                // Décalage : barre en tinte claire qui déborde du bloc
+                $this->pdf->rectRgb(0, $bandH + 10, $this->w * 0.44, 6.5, $this->accentSoft);
+                return $bandH + 40;
+
             case 'centered':
                 // Composition centrée, filets fins
                 $y = $this->top + 44;
@@ -359,43 +408,61 @@ final class PdfComposer
         }
     }
 
-    private function sectionHead(float $y, string $title): float
+    private function sectionHead(float $y, string $title, int $num = 0): float
     {
-        $left = $this->marginLeft();
+        $left = $this->colX();
+        $width = $this->colWidth();
         $y += 10;
         switch ($this->opener) {
             case 'band':
                 $this->pdf->rectRgb($left, $y - 8, 3, 14, $this->accent);
-                $this->pdf->text($left + 10, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $this->textWidth() - 10));
+                $this->pdf->text($left + 10, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $width - 10));
                 break;
             case 'number':
-                $this->pdf->text($left, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $this->textWidth()), 0, 0, $this->accentDark());
+                $this->pdf->text($left, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $width), 0, 0, $this->accentDark());
                 break;
             case 'centered':
-                $this->centerText($y + 3, 'display2', 12.5, $this->fitOneLine($title, 'display2', 12.5, $this->textWidth() * 0.9));
+                $this->centerText($y + 3, 'display2', 12.5, $this->fitOneLine($title, 'display2', 12.5, $width * 0.9));
                 break;
+            case 'premium':
+                // Pavé numéroté façon sommaire de magazine
+                $sq = 15.0;
+                $this->pdf->rectRgb($left, $y - 8, $sq, $sq, $this->accent);
+                $numText = str_pad((string) max(1, $num), 2, '0', STR_PAD_LEFT);
+                $numW = $this->pdf->width($numText, 'label', 7);
+                $this->pdf->text($left + ($sq - $numW) / 2, $y + 2.5, 'label', 7, $numText, 0, 0, $this->reverseInk());
+                $titleW = $width - $sq - 8;
+                $lines = $this->wrapText($title, 'sans', 10.5, $titleW);
+                if (count($lines) > 2) {
+                    $lines = [$lines[0], $this->fitOneLine(implode(' ', array_slice($lines, 1)), 'sans', 10.5, $titleW)];
+                }
+                $ty = $y + 3;
+                foreach ($lines as $line) {
+                    $this->pdf->text($left + $sq + 8, $ty, 'sans', 10.5, $line);
+                    $ty += 13;
+                }
+                return max($y + 24, $ty + 11);
             default:
-                $this->pdf->text($left, $y + 3, 'body', 13, $this->fitOneLine($title, 'body', 13, $this->textWidth()));
+                $this->pdf->text($left, $y + 3, 'body', 13, $this->fitOneLine($title, 'body', 13, $width));
         }
         return $y + 24;
     }
 
-    /** Écrit un paragraphe justifié, avec coupure de page automatique. */
+    /** Écrit un paragraphe justifié, avec coupure de colonne/page automatique. */
     private function paragraph(float $y, string $text, bool $indent): float
     {
         $isList = str_starts_with(trim($text), '–') || str_starts_with(trim($text), '-') || str_starts_with(trim($text), '•');
-        $width = $this->textWidth();
+        $width = $this->colWidth();
         $indentPt = $indent && !$isList ? 13.0 : 0.0;
-        $lines = $this->justify($text, 'body', self::BODY_SIZE, $width, $indentPt, $isList ? 11.0 : 0.0);
+        $lines = $this->justify($text, 'body', $this->bodySize, $width, $indentPt, $isList ? 11.0 : 0.0);
 
         foreach ($lines as $line) {
             if ($y > $this->h - $this->bottom - 4) {
-                $this->newPage();
-                $y = $this->top + 16;
+                $y = $this->breakColumn();
             }
-            $x = $this->marginLeft() + $line['x'];
-            $this->pdf->text($x, $y, 'body', self::BODY_SIZE, $line['text'], $line['tw']);
-            $y += self::LEADING;
+            $x = $this->colX() + $line['x'];
+            $this->pdf->text($x, $y, 'body', $this->bodySize, $line['text'], $line['tw']);
+            $y += $this->leading;
         }
         return $y + 4.5;
     }
@@ -405,20 +472,22 @@ final class PdfComposer
     {
         $labels = \App\Core\Util::CALLOUTS;
         $label = mb_strtoupper($labels[$kind] ?? $kind);
-        $width = $this->textWidth();
-        $pad = 12.0;
-        $innerW = $width - 2 * $pad - 6;
+        $premium = $this->opener === 'premium';
+        $width = $this->colWidth();
+        $pad = $premium ? 10.0 : 12.0;
+        $bodyFontSize = $premium ? 8.8 : 9.6;
+        $innerW = $width - 2 * $pad - ($premium ? 0 : 6);
 
         $lines = [];
         foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
             if ($i > 0) {
                 $lines[] = '';
             }
-            foreach ($this->wrapText(trim($paragraph), 'body', 9.6, $innerW) as $line) {
+            foreach ($this->wrapText(trim($paragraph), 'body', $bodyFontSize, $innerW) as $line) {
                 $lines[] = $line;
             }
         }
-        $lineH = 13.4;
+        $lineH = $premium ? 12.2 : 13.4;
         $boxH = 30 + count($lines) * $lineH + $pad * 0.7;
 
         if ($boxH > $this->h - $this->top - $this->bottom - 20) {
@@ -426,24 +495,32 @@ final class PdfComposer
         }
         $y = $this->ensureRoom($y, $boxH + 10);
         $y += 4;
-        $left = $this->marginLeft();
+        $left = $this->colX();
 
+        $fg = null;
+        $labelFg = $this->accentDark();
         if ($this->opener === 'centered') {
             // Élégant : hairlines, pas de fond
             $this->pdf->rectRgb($left, $y, $width, 0.6, $this->ink);
             $this->pdf->rectRgb($left, $y + $boxH, $width, 0.6, $this->ink);
             $tx = $left + 2;
+        } elseif ($premium) {
+            // Premium : encart en APLAT accent, texte réversé — l'esprit magazine
+            $this->pdf->rectRgb($left, $y, $width, $boxH, $this->accent);
+            $fg = $this->reverseInk();
+            $labelFg = $fg;
+            $tx = $left + $pad;
         } else {
             $this->pdf->rectRgb($left, $y, $width, $boxH, $this->accentSoft);
             $this->pdf->rectRgb($left, $y, 3.4, $boxH, $this->accent);
             $tx = $left + $pad + 6;
         }
         $ty = $y + $pad + 3;
-        $this->pdf->text($tx, $ty, 'label', 7.2, $label, 0, 2.0, $this->accentDark());
+        $this->pdf->text($tx, $ty, 'label', 7.2, $label, 0, 2.0, $labelFg);
         $ty += 17;
         foreach ($lines as $line) {
             if ($line !== '') {
-                $this->pdf->text($tx, $ty, 'body', 9.6, $line);
+                $this->pdf->text($tx, $ty, 'body', $bodyFontSize, $line, 0, 0, $fg);
             }
             $ty += $lineH;
         }
@@ -453,17 +530,18 @@ final class PdfComposer
     /** Emplacement visuel : image JPEG incorporée ou cadre réservé légendé. */
     private function figure(float $y, int $chapterNum, array $image): float
     {
-        $width = $this->textWidth();
+        $width = $this->colWidth();
         $height = $width * 2 / 3;
         $y = $this->ensureRoom($y, $height + 40);
         $y += 8;
+        $left = $this->colX();
 
         $uploads = (string) Config::get('paths.uploads');
         $file = !empty($image['filename']) ? $uploads . '/' . $image['filename'] : null;
         if ($file && is_file($file)) {
             $name = $this->pdf->addJpeg($file);
             if ($name !== null) {
-                $this->pdf->image($name, $this->marginLeft(), $y, $width, $height);
+                $this->pdf->image($name, $left, $y, $width, $height);
             } else {
                 $this->placeholderBox($y, $width, $height, $image);
             }
@@ -472,16 +550,17 @@ final class PdfComposer
         }
         $y += $height + 14;
         $caption = 'Fig. ' . $chapterNum . '.' . $image['slot'] . ' — ' . ($image['caption'] ?: 'Visuel');
-        $this->pdf->text($this->marginLeft(), $y, 'italic', 9, $this->fitOneLine($caption, 'italic', 9, $width), 0, 0, $this->gray);
+        $this->pdf->text($left, $y, 'italic', 9, $this->fitOneLine($caption, 'italic', 9, $width), 0, 0, $this->gray);
         return $y + 18;
     }
 
     private function placeholderBox(float $y, float $width, float $height, array $image): void
     {
-        $this->pdf->rect($this->marginLeft(), $y, $width, $height, 0.93);
+        $left = $this->colX();
+        $this->pdf->rect($left, $y, $width, $height, 0.93);
         $label = 'Emplacement visuel — ' . ($image['spec'] ?: '300 dpi');
         $label = $this->fitOneLine($label, 'label', 8, $width - 20);
-        $x = $this->marginLeft() + ($width - $this->pdf->width($label, 'label', 8)) / 2;
+        $x = $left + ($width - $this->pdf->width($label, 'label', 8)) / 2;
         $this->pdf->text($x, $y + $height / 2, 'label', 8, $label, 0, 0, $this->gray);
     }
 
@@ -539,10 +618,40 @@ final class PdfComposer
     private function ensureRoom(float $y, float $needed): float
     {
         if ($y + $needed > $this->h - $this->bottom) {
-            $this->newPage();
-            return $this->top + 16;
+            return $this->breakColumn();
         }
         return $y;
+    }
+
+    /** Colonne suivante, ou page suivante quand la dernière colonne est pleine. */
+    private function breakColumn(): float
+    {
+        if ($this->col < $this->columns - 1) {
+            $this->col++;
+            return $this->colTop;
+        }
+        $this->col = 0;
+        $this->newPage();
+        $this->colTop = $this->top + 16;
+        return $this->colTop;
+    }
+
+    private function colWidth(): float
+    {
+        $full = $this->textWidth();
+        return $this->columns > 1 ? ($full - $this->colGap * ($this->columns - 1)) / $this->columns : $full;
+    }
+
+    private function colX(): float
+    {
+        return $this->marginLeft() + $this->col * ($this->colWidth() + $this->colGap);
+    }
+
+    /** Couleur de texte lisible posée sur l'accent (réversé blanc ou encre). */
+    private function reverseInk(): array
+    {
+        [$r, $g, $b] = $this->accent;
+        return (0.299 * $r + 0.587 * $g + 0.114 * $b) > 165 ? $this->ink : [255, 255, 255];
     }
 
     private function marginLeft(): float
@@ -754,6 +863,27 @@ final class MiniPdf
         $this->current .= sprintf(
             "BT %s/%s %.2F Tf %.3F Tw %.3F Tc %.2F %.2F Td (%s) Tj ET %s\n",
             $color, $id, $size, $wordSpacing, $charSpacing, $x, $yPdf, $encoded, $rgb ? '0 0 0 rg' : ''
+        );
+    }
+
+    /**
+     * Texte pivoté de 90° horaire (sens de lecture d'un dos de livre, de haut
+     * en bas) — police TTF incorporée uniquement. (x, y) : départ de la ligne
+     * de base, y mesuré depuis le haut ; le texte descend le long de la page.
+     */
+    public function vtext(float $x, float $y, string $font, float $size, string $str, float $charSpacing = 0, ?array $rgb = null): void
+    {
+        if (!isset($this->ttf[$font])) {
+            return;
+        }
+        $yPdf = $this->h - $y;
+        $color = $rgb
+            ? sprintf('%.3F %.3F %.3F rg ', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255)
+            : '';
+        $hex = $this->ttf[$font]['ttf']->gidHex($str);
+        $this->current .= sprintf(
+            "BT %s/%s %.2F Tf %.3F Tc 0 -1 1 0 %.2F %.2F Tm <%s> Tj ET %s\n",
+            $color, $this->ttf[$font]['id'], $size, $charSpacing, $x, $yPdf, $hex, $rgb ? '0 0 0 rg' : ''
         );
     }
 

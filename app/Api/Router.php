@@ -425,6 +425,62 @@ final class Router
                 if ($name !== null) {
                     $pdf->image($name, 0, 0, $pageW, $pageH);
                 }
+
+                // Tranche VECTORIELLE par-dessus le JPEG : aplat strictement uni
+                // (aucun artefact de compression ne peut y déborder) + titre et
+                // auteur en texte vectoriel net, polices incorporées.
+                $hexRgb = function (string $hex): array {
+                    $hex = ltrim($hex, '#');
+                    if (strlen($hex) === 3) {
+                        $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+                    }
+                    return [(int) hexdec(substr($hex, 0, 2)), (int) hexdec(substr($hex, 2, 2)), (int) hexdec(substr($hex, 4, 2))];
+                };
+                $spineHex = CoverStudio::spineHex($frontEls, $cover['palette']);
+                $spineX = $mm($bleed + $geometry['w_mm']);
+                $spineWpt = $mm((float) $geometry['spine_mm']);
+                $pdf->rectRgb($spineX, 0, $spineWpt, $pageH, $hexRgb($spineHex));
+
+                if ((float) $geometry['spine_mm'] >= 6.35) {
+                    $fonts = APP_ROOT . '/app/fonts/';
+                    $pdf->addTtf('spineT', $fonts . 'InstrumentSerif-Regular.ttf');
+                    $pdf->addTtf('spineA', $fonts . 'IBMPlexMono-Medium.ttf');
+                    $fg = $hexRgb(CoverStudio::spineTextHex($spineHex, $cover['palette']));
+
+                    $label = trim((string) ($cover['texts']['title'] ?? ''));
+                    $author = mb_strtoupper(trim((string) ($cover['texts']['author'] ?? '')));
+                    $margin = $mm(14.0);
+                    $gap = $mm(8.0);
+                    $available = $pageH - 2 * $margin;
+
+                    $size = max(8.0, min($spineWpt * 0.52, 15.0));
+                    $measure = function (float $s) use ($pdf, $label, $author, $gap): array {
+                        $titleW = $pdf->width($label, 'spineT', $s);
+                        $authorW = $author !== '' ? $pdf->width($author, 'spineA', max(6.5, $s * 0.55), 0.8) + $gap : 0.0;
+                        return [$titleW, $authorW];
+                    };
+                    [$titleW, $authorW] = $measure($size);
+                    while ($size > 7.0 && $titleW + $authorW > $available) {
+                        $size *= 0.93;
+                        [$titleW, $authorW] = $measure($size);
+                    }
+                    if ($titleW + $authorW > $available && $author !== '') {
+                        $author = '';
+                        [$titleW, $authorW] = $measure($size);
+                    }
+                    while ($titleW > $available && mb_strlen($label) > 8) {
+                        $label = rtrim(mb_substr($label, 0, -2)) . '…';
+                        [$titleW, $authorW] = $measure($size);
+                    }
+
+                    // Ligne de base centrée dans l'épaisseur du dos (capitale ≈ 0,7 × corps)
+                    $ty = ($pageH - ($titleW + $authorW)) / 2;
+                    $pdf->vtext($spineX + $spineWpt / 2 - $size * 0.34, $ty, 'spineT', $size, $label, 0, $fg);
+                    if ($author !== '') {
+                        $sizeA = max(6.5, $size * 0.55);
+                        $pdf->vtext($spineX + $spineWpt / 2 - $sizeA * 0.34, $ty + $titleW + $gap, 'spineA', $sizeA, $author, 0.8, $fg);
+                    }
+                }
                 $file = $exportDir . '/couverture-' . (int) $project['id'] . '-kdp.pdf';
                 file_put_contents($file, $pdf->build());
                 self::download($file, 'couverture-broche-kdp.pdf', 'application/pdf');
@@ -490,15 +546,16 @@ final class Router
                 @set_time_limit(300);
                 $project = self::project((int) Http::in('id'), $userId);
                 $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
-                // Thème choisi + couleur d'accent héritée de la couverture
+                // Thème choisi (surchargé par ?theme= pour l'aperçu) + accent couverture
+                $theme = (string) (Http::in('theme') ?: ($project['interior_theme'] ?? 'editorial'));
                 $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
                 $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
                 $file = PdfBook::build(
                     $project, $book,
-                    (string) ($project['interior_theme'] ?? 'editorial'),
+                    $theme,
                     (string) ($coverPalette['c2'] ?? '#C4571F')
                 );
-                self::download($file, Util::slug($book['title']) . '-interieur.pdf', 'application/pdf');
+                self::download($file, Util::slug($book['title']) . '-interieur.pdf', 'application/pdf', (bool) Http::in('inline'));
 
             case 'interior/themes':
                 $project = self::project((int) Http::in('id'), $userId);
@@ -805,10 +862,10 @@ final class Router
         Http::ok(['image' => Db::one('SELECT * FROM images WHERE id = ?', [$imageId])]);
     }
 
-    private static function download(string $file, string $downloadName, string $mime): never
+    private static function download(string $file, string $downloadName, string $mime, bool $inline = false): never
     {
         header('Content-Type: ' . $mime);
-        header('Content-Disposition: attachment; filename="' . $downloadName . '"');
+        header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment') . '; filename="' . $downloadName . '"');
         header('Content-Length: ' . (string) filesize($file));
         header('Cache-Control: no-store');
         readfile($file);

@@ -64,6 +64,41 @@ final class InteriorThemes
                 imagettftext($im, 8, 0, 50, 340, $accent, $mono, 'CHIFFRE CLE');
                 break;
 
+            case 'premium':
+                // Aplat magazine + 2 colonnes + encart réversé + décalage
+                $whiteTxt = imagecolorallocate($im, 255, 255, 255);
+                imagefilledrectangle($im, 0, 0, $w, 150, $accent);
+                imagettftext($im, 8, 0, 30, 34, $whiteTxt, $mono, 'C H A P I T R E  3');
+                imagefilledrectangle($im, 30, 42, 52, 44, $whiteTxt);
+                $tint = imagecolorallocate($im, (int) ($ar + (255 - $ar) * 0.45), (int) ($ag + (255 - $ag) * 0.45), (int) ($ab + (255 - $ab) * 0.45));
+                imagettftext($im, 40, 0, $w - 88, 140, $tint, $sans, '03');
+                imagettftext($im, 16, 0, 30, 80, $whiteTxt, $sans, 'Un titre');
+                imagettftext($im, 16, 0, 30, 104, $whiteTxt, $sans, 'magazine');
+                imagefilledrectangle($im, 0, 158, (int) ($w * 0.44), 164, $accentSoft);
+                // Deux colonnes de texte courant
+                $colW = (int) (($w - 68 - 14) / 2);
+                for ($c = 0; $c < 2; $c++) {
+                    $cx = 34 + $c * ($colW + 14);
+                    for ($i = 0; $i < 9; $i++) {
+                        $len = $i === 8 ? 0.55 : (0.84 + ($i % 3) * 0.05);
+                        imagefilledrectangle($im, $cx, 186 + $i * 12, (int) ($cx + $colW * $len), 190 + $i * 12, $lightGray);
+                    }
+                }
+                // Encart aplat réversé dans la colonne droite + pavé numéroté à gauche
+                $ex = 34 + $colW + 14;
+                imagefilledrectangle($im, $ex, 306, $ex + $colW, 380, $accent);
+                imagettftext($im, 7, 0, $ex + 10, 324, $whiteTxt, $mono, 'A RETENIR');
+                for ($i = 0; $i < 3; $i++) {
+                    imagefilledrectangle($im, $ex + 10, 336 + $i * 12, $ex + $colW - 12, 340 + $i * 12, $tint);
+                }
+                imagefilledrectangle($im, 34, 306, 50, 322, $accent);
+                imagettftext($im, 7, 0, 38, 318, $whiteTxt, $mono, '02');
+                imagefilledrectangle($im, 56, 310, 34 + $colW, 314, $gray);
+                for ($i = 0; $i < 5; $i++) {
+                    imagefilledrectangle($im, 34, 336 + $i * 12, (int) (34 + $colW * ($i === 4 ? 0.5 : 0.9)), 340 + $i * 12, $lightGray);
+                }
+                break;
+
             case 'elegant':
                 imagettftext($im, 8, 0, (int) ($w / 2 - 56), 60, $gray, $mono, 'C H A P I T R E  I I I');
                 imagefilledrectangle($im, (int) ($w / 2 - 34), 74, (int) ($w / 2 + 34), 75, $ink);

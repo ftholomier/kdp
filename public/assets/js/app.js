@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c13';
+  const BUILD = '2026-08-11 · c14';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1076,25 +1076,28 @@
 
   function step7View() {
     const L = S.layout;
+    const theme = S.project.interior_theme || 'editorial';
+    const themeName = ((S.interiorThemes || []).find(t => t.slug === theme) || {}).name || '';
+    const pdfUrl = `api.php?r=export/pdf&id=${S.project.id}&inline=1&theme=${encodeURIComponent(theme)}`;
     return `
     <div class="layout-grid">
       <div class="layout-preview">
         <div class="head">
           <div>
             <div class="kicker">Étape 07 — Mise en page</div>
-            <div class="t">Épreuve intérieure — ${L ? esc(String(L.geometry.w_mm).replace('.', ',') + ' × ' + String(L.geometry.h_mm).replace('.', ',') + ' mm') : ''}</div>
+            <div class="t">PDF réel — thème ${esc(themeName || theme)}${L ? esc(' · ' + String(L.geometry.w_mm).replace('.', ',') + ' × ' + String(L.geometry.h_mm).replace('.', ',') + ' mm') : ''}</div>
           </div>
-          <button class="btn btn-ghost" onclick="window.open('print.php?id=${S.project.id}', '_blank')">Ouvrir l'épreuve complète ↗</button>
+          <button class="btn btn-ghost" onclick="window.open('${pdfUrl}', '_blank')">Ouvrir le PDF en grand ↗</button>
         </div>
         <div class="preview-frame-wrap">
-          <iframe class="preview-frame" src="print.php?id=${S.project.id}&mode=preview"></iframe>
+          <iframe class="preview-frame" src="${pdfUrl}#page=9&toolbar=0&navpanes=0&view=FitH" title="Aperçu du PDF intérieur"></iframe>
         </div>
-        ${L ? `<div class="preview-caption">Marges ${String(L.geometry.margin_top_mm).replace('.', ',')} mm · gouttière ${String(L.geometry.margin_inner_mm).replace('.', ',')} mm · dos ${esc(L.spine_label)} · ${L.geometry.pages} pages estimées</div>` : ''}
+        ${L ? `<div class="preview-caption">Aperçu = le PDF final exact (polices incorporées) · marges ${String(L.geometry.margin_top_mm).replace('.', ',')} mm · gouttière ${String(L.geometry.margin_inner_mm).replace('.', ',')} mm · dos ${esc(L.spine_label)} · ${L.geometry.pages} pages estimées</div>` : ''}
       </div>
 
       <div class="layout-side">
         <div class="title">Mise en page intérieure</div>
-        <div class="sub">Choisissez le style du PDF : la couleur d'accent vient de votre couverture.</div>
+        <div class="sub">Choisissez le style : l'aperçu ci-contre montre le PDF réel, recomposé à chaque changement. La couleur d'accent vient de votre couverture.</div>
         <div class="cover-templates" style="margin-bottom:20px;">
           ${(S.interiorThemes || []).map(t => `
           <div class="cover-template ${t.selected ? 'on' : ''}" onclick="App.setInteriorTheme('${esc(t.slug)}')" title="${esc(t.desc)}">
@@ -2103,7 +2106,8 @@
         S.project.interior_theme = slug;
         (S.interiorThemes || []).forEach(t => { t.selected = t.slug === slug; });
         render();
-        toast('Mise en page « ' + slug + ' » appliquée — visible dans le PDF intérieur.');
+        const t = (S.interiorThemes || []).find(x => x.slug === slug);
+        toast('Mise en page « ' + ((t && t.name) || slug) + ' » appliquée — l\'aperçu se recompose.');
       } catch (e) { toast(e.message, true); }
     },
 

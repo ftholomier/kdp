@@ -83,6 +83,10 @@ final class PdfComposer
     private float $regionMaxY = 0.0;   // profondeur maxi atteinte dans la région
     private int $premiumCols = 2;      // colonnes de la section premium en cours
     private float $balanceBottom = 0.0; // plancher d'équilibrage des colonnes (0 = plein bas de page)
+    private float $regionContentH = 0.0; // hauteur totale mesurée de la région en cours
+    private float $regionConsumed = 0.0; // hauteur déjà composée dans les colonnes closes
+    /** @var array<int,array> encarts FLOTTÉS : reportés en tête de colonne suivante */
+    private array $floatQueue = [];
 
     private const BODY_SIZE = 10.8;
     private const LEADING   = 15.4;
@@ -435,6 +439,14 @@ final class PdfComposer
             foreach ($run as $fIndex => $block) {
                 $type = $block['t'] ?? 'p';
                 if ($type === 'call') {
+                    // Encart qui ne tient plus dans la colonne : FLOTTÉ en tête
+                    // de la colonne suivante, le texte comble l'espace restant.
+                    $boxH = $this->calloutHeight((string) $block['text']);
+                    if ($y + $boxH + 14 > $this->colBottom()
+                        && $boxH < $this->h - $this->top - $this->bottom - 40) {
+                        $this->floatQueue[] = $block;
+                        continue;
+                    }
                     $y = $this->gridSnap($this->callout($y, (string) $block['kind'], (string) $block['text']));
                 } elseif ($type === 'h') {
                     $y = $this->gridSnap($this->subHead($y, (string) $block['text']));
@@ -447,9 +459,29 @@ final class PdfComposer
                     $y = $this->paragraph($y, (string) $block['text'], $fIndex > 0);
                 }
             }
+            // Encarts encore en attente : posés avant de refermer la région
+            while ($this->floatQueue) {
+                $block = array_shift($this->floatQueue);
+                $y = $this->gridSnap($this->callout($y, (string) $block['kind'], (string) $block['text']));
+            }
             $y = $this->endRegion($y);
         }
         return $y;
+    }
+
+    /** Hauteur d'un encart premium à la largeur de colonne courante. */
+    private function calloutHeight(string $text): float
+    {
+        $pad = 16.0;
+        $innerW = $this->colWidth() - 2 * $pad;
+        $n = 0;
+        foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
+            if ($i > 0) {
+                $n++;
+            }
+            $n += count($this->wrapText(trim($paragraph), 'body', 8.8, $innerW));
+        }
+        return 38 + $n * 12.6 + $pad * 0.7;
     }
 
     /** Hauteur estimée d'un flux de blocs composé en colonnes premium. */
@@ -458,7 +490,7 @@ final class PdfComposer
         $cols = $this->premiumCols;
         $full = $this->textWidth();
         $colW = $cols > 1 ? ($full - $this->colGap * ($cols - 1)) / $cols : $full;
-        [$size, $lead] = $cols >= 3 ? [8.6, 12.0] : [9.4, 13.2];
+        [$size, $lead] = $cols >= 3 ? [8.6, 13.2] : [9.4, 13.2];
         $h = 0.0;
         foreach ($blocks as $block) {
             $type = $block['t'] ?? 'p';
@@ -856,9 +888,9 @@ final class PdfComposer
             $this->pdf->text($x, $y, 'body', $this->bodySize, $line['text'], $line['tw']);
             $y += $this->leading;
         }
-        // En colonnes premium : aucun blanc entre paragraphes (l'alinéa suffit),
-        // la grille de lignes de base reste donc parfaitement alignée.
-        $gap = ($this->isPremium() && $this->columns > 1) ? 0.0 : 4.5;
+        // Premium : aucun blanc entre paragraphes (l'alinéa suffit), la grille
+        // de lignes de base reste donc parfaitement alignée sur toute la page.
+        $gap = $this->isPremium() ? 0.0 : 4.5;
         $this->regionMaxY = max($this->regionMaxY, $y);
         return $y + $gap;
     }
@@ -1028,18 +1060,41 @@ final class PdfComposer
     /** Colonne suivante, ou page suivante quand la dernière colonne est pleine. */
     private function breakColumn(): float
     {
+        // Hauteur réellement composée dans la colonne qui se referme
+        $this->regionConsumed += max(0.0, $this->colBottom() - $this->colTop);
         if ($this->col < $this->columns - 1) {
             // Profondeur atteinte par la colonne close : son plancher réel
             $this->regionMaxY = max($this->regionMaxY, $this->colBottom());
             $this->col++;
-            return $this->colTop;
+            $y = $this->colTop;
+        } else {
+            $this->col = 0;
+            $this->newPage();
+            $this->colTop = $this->top + 16;
+            $this->regionMaxY = $this->colTop;
+            // Nouvelle page d'une région en cours : RÉ-ÉQUILIBRAGE avec le
+            // reliquat mesuré — la dernière page d'une longue région retombe
+            // sur des colonnes d'égale hauteur au lieu d'une colonne pleine
+            // et d'une colonne moignon.
+            $this->balanceBottom = 0.0;
+            if ($this->columns > 1 && $this->regionContentH > 0) {
+                $remaining = $this->regionContentH - $this->regionConsumed;
+                if ($remaining > 0) {
+                    $perCol = ceil($remaining / $this->columns / $this->leading) * $this->leading + 4;
+                    if ($this->colTop + $perCol < $this->h - $this->bottom - $this->leading) {
+                        $this->balanceBottom = $this->colTop + $perCol;
+                    }
+                }
+            }
+            $y = $this->colTop;
         }
-        $this->col = 0;
-        $this->newPage();
-        $this->colTop = $this->top + 16;
-        $this->regionMaxY = $this->colTop;
-        $this->balanceBottom = 0.0;   // au-delà d'une page : colonnes pleines
-        return $this->colTop;
+        // Encarts flottés : posés en tête de la nouvelle colonne/page, le texte
+        // reprend juste dessous — aucun trou laissé derrière.
+        while ($this->floatQueue) {
+            $block = array_shift($this->floatQueue);
+            $y = $this->gridSnap($this->callout($y, (string) $block['kind'], (string) $block['text']));
+        }
+        return $y;
     }
 
     /**
@@ -1050,18 +1105,25 @@ final class PdfComposer
     {
         $this->columns = max(1, $cols);
         $this->col = 0;
+        // Interligne UNIQUE (13,2 pt) quel que soit le nombre de colonnes :
+        // toutes les lignes du livre retombent sur le même registre de page.
+        [$this->bodySize, $this->leading] = match (true) {
+            $this->columns >= 3 => [8.6, 13.2],
+            $this->columns === 2 => [9.4, 13.2],
+            default => [10.2, 13.2],
+        };
+        // Départ de région CALÉ sur la grille de la page
+        $y = $this->gridSnap($y);
         $this->colTop = $y;
         $this->regionMaxY = $y;
-        [$this->bodySize, $this->leading] = match (true) {
-            $this->columns >= 3 => [8.6, 12.0],
-            $this->columns === 2 => [9.4, 13.2],
-            default => [10.2, 14.4],
-        };
         // Équilibrage : si le contenu tient dans la page, chaque colonne reçoit
-        // la même hauteur au lieu de tout empiler dans la première.
+        // la même hauteur (arrondie à la ligne) au lieu de tout empiler dans la
+        // première.
         $this->balanceBottom = 0.0;
+        $this->regionContentH = $contentH;
+        $this->regionConsumed = 0.0;
         if ($this->columns > 1 && $contentH > 0) {
-            $perCol = $contentH / $this->columns + $this->leading * 1.5;
+            $perCol = ceil($contentH / $this->columns / $this->leading) * $this->leading + 4;
             if ($y + $perCol < $this->h - $this->bottom - $this->leading) {
                 $this->balanceBottom = $y + $perCol;
             }
@@ -1081,7 +1143,9 @@ final class PdfComposer
         $this->colTop = $this->top + 16;
         $this->regionMaxY = $y;
         $this->balanceBottom = 0.0;
-        [$this->bodySize, $this->leading] = [10.2, 14.4];
+        $this->regionContentH = 0.0;
+        $this->regionConsumed = 0.0;
+        [$this->bodySize, $this->leading] = [10.2, 13.2];
         return $y;
     }
 
@@ -1095,16 +1159,18 @@ final class PdfComposer
     }
 
     /**
-     * Aligne l'ordonnée sur la grille de lignes de base de la région : les
-     * colonnes voisines et les pages successives retombent sur le même rythme.
+     * Aligne l'ordonnée sur la grille de lignes de base DE LA PAGE (et non de
+     * la région) : colonnes voisines, pages successives et pages en vis-à-vis
+     * retombent toutes sur le même registre — l'alignement d'imprimeur.
      */
     private function gridSnap(float $y): float
     {
-        if ($this->columns <= 1) {
-            return $y;
+        $base = $this->top + 16;
+        if ($y <= $base) {
+            return $base;
         }
-        $n = max(0, (int) ceil(($y - $this->colTop) / $this->leading - 0.001));
-        return $this->colTop + $n * $this->leading;
+        $n = (int) ceil(($y - $base) / $this->leading - 0.001);
+        return $base + $n * $this->leading;
     }
 
     private function colWidth(): float

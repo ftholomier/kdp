@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c12';
+  const BUILD = '2026-08-11 · c13';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1093,6 +1093,16 @@
       </div>
 
       <div class="layout-side">
+        <div class="title">Mise en page intérieure</div>
+        <div class="sub">Choisissez le style du PDF : la couleur d'accent vient de votre couverture.</div>
+        <div class="cover-templates" style="margin-bottom:20px;">
+          ${(S.interiorThemes || []).map(t => `
+          <div class="cover-template ${t.selected ? 'on' : ''}" onclick="App.setInteriorTheme('${esc(t.slug)}')" title="${esc(t.desc)}">
+            <img class="thumb" src="${t.thumb}" alt="${esc(t.name)}">
+            <div class="nm">${esc(t.name)}</div>
+          </div>`).join('')}
+        </div>
+
         <div class="title">Réglages d'impression</div>
         <div class="sub">Conformes aux gabarits KDP broché.</div>
         ${!L ? loadingCard('Calculs en cours…') : `
@@ -1115,10 +1125,10 @@
           <div class="t">Prêt à publier</div>
           <div class="d">${esc(L.pricing.label)}</div>
           <div class="btns">
-            <button class="btn btn-light" onclick="window.open('print.php?id=${S.project.id}&auto=1', '_blank')">Imprimer l'intérieur (PDF qualité studio)</button>
-            <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/pdf&id=${S.project.id}', '_blank')">PDF automatique (serveur)</button>
-            <button class="btn btn-light" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 Couverture broché PDF (KDP) · dos ${esc(L.spine_label)}</button>
+            <button class="btn btn-light" onclick="window.open('api.php?r=export/pdf&id=${S.project.id}', '_blank')">📘 PDF intérieur (KDP) — polices incorporées</button>
+            <button class="btn btn-light" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 PDF couverture broché (KDP) · dos ${esc(L.spine_label)}</button>
             <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/docx&id=${S.project.id}', '_blank')">Manuscrit .docx (Kindle eBook)</button>
+            <button class="btn btn-outline-light" onclick="window.open('print.php?id=${S.project.id}', '_blank')">Aperçu de l'épreuve navigateur ↗</button>
             <button class="btn btn-light" style="background:var(--accent); color:#FFF6EA;" onclick="App.openPublishModal()">🚀 Publier sur Amazon KDP</button>
           </div>
         </div>`}
@@ -1132,6 +1142,11 @@
       const data = await Api.get('layout/summary', { id: S.project.id });
       S.layout = data;
       render();
+      if (!S.interiorThemes) {
+        const themes = await Api.get('interior/themes', { id: S.project.id });
+        S.interiorThemes = themes.themes;
+        render();
+      }
     } catch (e) { toast(e.message, true); }
   }
 
@@ -1152,6 +1167,9 @@
       const keepSel = sel && findEl(sel.id) ? sel.id : null;
       sel = null;
       S.editorEls.forEach(el => stage.appendChild(buildNode(el)));
+      // Zone de sécurité KDP : gardez textes et éléments clés à l'intérieur
+      stage.insertAdjacentHTML('beforeend',
+        '<div style="position:absolute; inset:3.2% 4.5%; border:1px dashed rgba(255,45,138,.5); pointer-events:none; z-index:20;" title="Zone de sécurité — gardez les textes à l\'intérieur"></div>');
       stage.onpointerdown = e => { if (e.target === stage) select(null); };
       if (!keysBound) { document.addEventListener('keydown', onKeys); keysBound = true; }
       if (keepSel) select(findEl(keepSel));
@@ -2078,6 +2096,16 @@
     },
 
     next6() { S.step = 7; enterStep(); render(); window.scrollTo(0, 0); },
+
+    async setInteriorTheme(slug) {
+      try {
+        await Api.post('projects/update', { id: S.project.id, interior_theme: slug });
+        S.project.interior_theme = slug;
+        (S.interiorThemes || []).forEach(t => { t.selected = t.slug === slug; });
+        render();
+        toast('Mise en page « ' + slug + ' » appliquée — visible dans le PDF intérieur.');
+      } catch (e) { toast(e.message, true); }
+    },
 
     async setFinalPages(value) {
       try {

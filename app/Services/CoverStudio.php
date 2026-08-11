@@ -217,10 +217,8 @@ final class CoverStudio
 
     // ── Rendu GD des éléments ──────────────────────────────────────────────
 
-    public static function renderElements(array $els, ?string $illustrationPath): \GdImage
+    public static function renderElements(array $els, ?string $illustrationPath, int $W = self::W, int $H = self::H): \GdImage
     {
-        $W = self::W;
-        $H = self::H;
         $im = imagecreatetruecolor($W, $H);
         imagealphablending($im, true);
         imageantialias($im, true);
@@ -275,7 +273,7 @@ final class CoverStudio
                     }
                     break;
                 case 'text':
-                    self::drawTextElement($im, $el, $x, $y, $w);
+                    self::drawTextElement($im, $el, $x, $y, $w, $W, $H);
                     break;
             }
         }
@@ -285,14 +283,14 @@ final class CoverStudio
         return $im;
     }
 
-    private static function drawTextElement(\GdImage $im, array $el, int $x, int $y, int $w): void
+    private static function drawTextElement(\GdImage $im, array $el, int $x, int $y, int $w, int $W = self::W, int $H = self::H): void
     {
         $content = trim((string) ($el['text'] ?? ''));
         if ($content === '') {
             return;
         }
         $font = self::fontFile((string) ($el['font'] ?? 'instrument-serif'), !empty($el['italic']));
-        $size = max(14, (int) round((float) ($el['size'] ?? 5.5) * self::W / 100));
+        $size = max(14, (int) round((float) ($el['size'] ?? 5.5) * $W / 100));
         $lh = (float) ($el['lh'] ?? 1.18);
         $maxLines = (int) ($el['maxLines'] ?? 0);
         $align = (string) ($el['align'] ?? 'left');
@@ -319,6 +317,18 @@ final class CoverStudio
                 $lines = $build($size);
             }
             $lines = array_slice($lines, 0, $maxLines);
+        }
+        // Ajustement à une hauteur maximale (ex. texte de 4ème de couverture) :
+        // la taille descend jusqu'à ce que le bloc tienne dans sa zone.
+        $maxH = isset($el['maxH']) ? (float) $el['maxH'] * $H / 100 : 0.0;
+        if ($maxH > 0) {
+            while ($size > 16 && count($lines) * $size * $lh * 1.35 > $maxH) {
+                $size = (int) ($size * 0.94);
+                $lines = $build($size);
+                if ($maxLines > 0) {
+                    $lines = array_slice($lines, 0, $maxLines);
+                }
+            }
         }
         $lineH = (int) round($size * $lh * 1.35); // pt → px approx.
         $baseline = $y + (int) round($size * 1.15);
@@ -405,28 +415,37 @@ final class CoverStudio
         $bio     = trim((string) ($texts['bio'] ?? ''));
         $author  = trim((string) ($texts['author'] ?? ''));
 
+        // La bio ne commence jamais par le nom : il est affiché séparément
+        if ($author !== '' && $bio !== '' && str_starts_with(mb_strtolower($bio), mb_strtolower($author))) {
+            $bio = trim(mb_substr($bio, mb_strlen($author)), " \t\n—–-–.");
+        }
+
         $els = [];
         $els[] = ['id' => 'fond', 'type' => 'rect', 'x' => 0, 'y' => 0, 'w' => 100, 'h' => 100, 'color' => $c1];
-        $els[] = ['id' => 'filet', 'type' => 'rect', 'x' => 8, 'y' => 7.2, 'w' => 84, 'h' => 0.16, 'color' => $c2];
+        $els[] = ['id' => 'filet', 'type' => 'rect', 'x' => 8, 'y' => 6.4, 'w' => 84, 'h' => 0.16, 'color' => $c2];
         if ($tagline !== '') {
-            $els[] = ['id' => 'tagline', 'type' => 'text', 'text' => $tagline, 'x' => 8, 'y' => 9.5, 'w' => 84,
-                      'size' => 3.4, 'font' => 'instrument-serif', 'italic' => true, 'weight' => 400,
-                      'align' => 'left', 'color' => $c2, 'lh' => 1.25, 'maxLines' => 3];
+            $els[] = ['id' => 'tagline', 'type' => 'text', 'text' => $tagline, 'x' => 8, 'y' => 8.4, 'w' => 84,
+                      'size' => 3.2, 'font' => 'instrument-serif', 'italic' => true, 'weight' => 400,
+                      'align' => 'left', 'color' => $c2, 'lh' => 1.25, 'maxLines' => 2, 'maxH' => 8];
         }
         if ($back !== '') {
-            $els[] = ['id' => 'back_text', 'type' => 'text', 'text' => $back, 'x' => 8, 'y' => 20, 'w' => 84,
+            // Zone bornée : le texte s'auto-réduit pour ne JAMAIS déborder sur la bio
+            $els[] = ['id' => 'back_text', 'type' => 'text', 'text' => $back, 'x' => 8, 'y' => 18, 'w' => 84,
                       'size' => 2.2, 'font' => 'instrument-sans', 'weight' => 400,
-                      'align' => 'left', 'color' => $c3, 'lh' => 1.5, 'maxLines' => 0];
+                      'align' => 'left', 'color' => $c3, 'lh' => 1.5, 'maxLines' => 0, 'maxH' => 44];
+        }
+        // Bloc auteur en bas à gauche, à l'écart de la zone code-barres (bas droit)
+        $bioTop = 66.5;
+        $els[] = ['id' => 'filet2', 'type' => 'rect', 'x' => 8, 'y' => $bioTop, 'w' => 10, 'h' => 0.16, 'color' => $c2];
+        if ($author !== '') {
+            $els[] = ['id' => 'author', 'type' => 'text', 'text' => mb_strtoupper($author), 'x' => 8, 'y' => $bioTop + 1.6,
+                      'w' => 56, 'size' => 1.7, 'font' => 'plex-mono', 'weight' => 400, 'align' => 'left',
+                      'color' => $c3, 'lh' => 1.3, 'maxLines' => 1];
         }
         if ($bio !== '') {
-            $els[] = ['id' => 'filet2', 'type' => 'rect', 'x' => 8, 'y' => 70, 'w' => 10, 'h' => 0.16, 'color' => $c2];
-            $els[] = ['id' => 'bio', 'type' => 'text', 'text' => ($author !== '' ? $author . ' — ' : '') . $bio,
-                      'x' => 8, 'y' => 72, 'w' => 84, 'size' => 1.9, 'font' => 'instrument-sans', 'weight' => 400,
-                      'align' => 'left', 'color' => $c3, 'lh' => 1.5, 'maxLines' => 5];
-        } elseif ($author !== '') {
-            $els[] = ['id' => 'bio', 'type' => 'text', 'text' => $author, 'x' => 8, 'y' => 72, 'w' => 84,
-                      'size' => 2.0, 'font' => 'plex-mono', 'weight' => 400, 'align' => 'left', 'color' => $c3,
-                      'lh' => 1.4, 'maxLines' => 1];
+            $els[] = ['id' => 'bio', 'type' => 'text', 'text' => $bio, 'x' => 8, 'y' => $bioTop + ($author !== '' ? 4.6 : 1.8),
+                      'w' => 56, 'size' => 1.8, 'font' => 'instrument-sans', 'weight' => 400,
+                      'align' => 'left', 'color' => $c3, 'lh' => 1.45, 'maxLines' => 6, 'maxH' => 15];
         }
         return $els;
     }
@@ -457,13 +476,14 @@ final class CoverStudio
         $c1 = self::alloc($wrap, (string) ($palette['c1'] ?? '#1B2A4A'));
         imagefilledrectangle($wrap, 0, 0, $totalW, $totalH, $c1);
 
-        // Faces rendues en haute résolution puis recadrées « cover » sur leur panneau
-        $back = self::renderElements($backEls, null);
-        self::drawCover($wrap, $back, 0, 0, $panelW, $panelH, false);
+        // Faces composées DIRECTEMENT aux dimensions du panneau (aucun
+        // recadrage : rien ne peut être rogné, ni titre ni texte de 4ème)
+        $back = self::renderElements($backEls, null, $panelW, $panelH);
+        imagecopy($wrap, $back, 0, 0, 0, 0, $panelW, $panelH);
         imagedestroy($back);
 
-        $front = self::renderElements($frontEls, $illustrationPath);
-        self::drawCover($wrap, $front, $totalW - $panelW, 0, $panelW, $panelH, false);
+        $front = self::renderElements($frontEls, $illustrationPath, $panelW, $panelH);
+        imagecopy($wrap, $front, $totalW - $panelW, 0, 0, 0, $panelW, $panelH);
         imagedestroy($front);
 
         // Tranche : fond + titre/auteur verticaux si assez épaisse (règle KDP ≈ 6,35 mm)
@@ -474,17 +494,43 @@ final class CoverStudio
             $label = trim((string) ($texts['title'] ?? ''));
             $author = mb_strtoupper(trim((string) ($texts['author'] ?? '')));
             $font = self::fontFile('instrument-serif');
-            $size = (int) max(18, min($spineW * 0.42, 60));
-            // Texte pivoté à -90° : lecture de haut en bas (dos vers la droite)
-            $box = imagettfbbox($size, 0, $font, $label);
-            $textW = abs($box[2] - $box[0]);
-            $ty = (int) (($totalH - $textW) / 2);
+            $fontA = self::fontFile('plex-mono');
+            $margin = $mmToPx(14.0);           // marge haute/basse de la tranche
+            $gap = $mmToPx(8.0);
+            $available = $totalH - 2 * $margin;
+
+            // Réduction automatique jusqu'à ce que titre (+ auteur) tiennent
+            $size = (int) max(14, min($spineW * 0.42, 60));
+            $fit = function (int $s) use ($font, $fontA, $label, $author, $gap): array {
+                $box = imagettfbbox($s, 0, $font, $label);
+                $titleW = abs($box[2] - $box[0]);
+                $authorW = 0;
+                if ($author !== '') {
+                    $boxA = imagettfbbox((int) max(10, $s * 0.5), 0, $fontA, $author);
+                    $authorW = abs($boxA[2] - $boxA[0]) + $gap;
+                }
+                return [$titleW, $authorW];
+            };
+            [$titleW, $authorW] = $fit($size);
+            while ($size > 14 && $titleW + $authorW > $available) {
+                $size = (int) ($size * 0.93);
+                [$titleW, $authorW] = $fit($size);
+            }
+            // Toujours trop long : on abandonne l'auteur, puis on tronque le titre
+            if ($titleW + $authorW > $available && $author !== '') {
+                $author = '';
+                [$titleW, $authorW] = $fit($size);
+            }
+            while ($titleW > $available && mb_strlen($label) > 8) {
+                $label = rtrim(mb_substr($label, 0, -2)) . '…';
+                [$titleW, $authorW] = $fit($size);
+            }
+
+            $ty = (int) (($totalH - ($titleW + $authorW)) / 2);
             imagettftext($wrap, $size, -90, $spineX + (int) ($spineW * 0.62), $ty, $c3, $font, $label);
             if ($author !== '') {
-                $fontA = self::fontFile('plex-mono');
-                $sizeA = (int) max(12, $size * 0.5);
-                $boxA = imagettfbbox($sizeA, 0, $fontA, $author);
-                imagettftext($wrap, $sizeA, -90, $spineX + (int) ($spineW * 0.30), $ty + $textW + $mmToPx(8) + abs($boxA[2] - $boxA[0]), $c3, $fontA, $author);
+                $sizeA = (int) max(10, $size * 0.5);
+                imagettftext($wrap, $sizeA, -90, $spineX + (int) ($spineW * 0.56), $ty + $titleW + $gap, $c3, $fontA, $author);
             }
         }
 
@@ -589,6 +635,9 @@ final class CoverStudio
                 $out['align']    = in_array($el['align'] ?? '', ['left', 'center', 'right'], true) ? $el['align'] : 'left';
                 $out['lh']       = max(0.9, min(2, (float) ($el['lh'] ?? 1.18)));
                 $out['maxLines'] = max(0, min(8, (int) ($el['maxLines'] ?? 0)));
+                if (isset($el['maxH'])) {
+                    $out['maxH'] = max(2, min(100, (float) $el['maxH']));
+                }
             }
             $clean[] = $out;
         }

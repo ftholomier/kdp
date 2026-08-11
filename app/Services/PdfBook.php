@@ -19,10 +19,21 @@ use App\Core\Config;
  */
 final class PdfBook
 {
-    public static function build(array $project, array $book): string
+    /** Thèmes de mise en page intérieure proposés à l'étape 07. */
+    public const THEMES = [
+        'editorial' => ['name' => 'Éditorial',    'desc' => 'Serif classique, filets fins — l\'esprit maison d\'édition.'],
+        'moderne'   => ['name' => 'Contemporain', 'desc' => 'Titres Poppins, grands numéros de chapitre colorés.'],
+        'magazine'  => ['name' => 'Magazine',     'desc' => 'Bandeaux pleine largeur, titres Bebas Neue impactants.'],
+        'elegant'   => ['name' => 'Élégant',      'desc' => 'DM Serif centré, ornements minimaux, grande respiration.'],
+    ];
+
+    public static function build(array $project, array $book, string $theme = 'editorial', string $accent = '#C4571F'): string
     {
+        if (!isset(self::THEMES[$theme])) {
+            $theme = 'editorial';
+        }
         $geometry = Layout::geometry($project);
-        $composer = new PdfComposer($geometry, $book, $project);
+        $composer = new PdfComposer($geometry, $book, $project, $theme, $accent);
         $pdf = $composer->compose();
 
         $dir = (string) Config::get('paths.exports');
@@ -35,26 +46,43 @@ final class PdfBook
     }
 }
 
-/** Compose le livre page par page au-dessus de MiniPdf. */
+/**
+ * Compose le livre page par page au-dessus de MiniPdf.
+ * Toutes les polices sont INCORPORÉES (TTF embarquées, exigence KDP) et la
+ * mise en page suit le thème choisi, avec la couleur d'accent de la couverture.
+ */
 final class PdfComposer
 {
     private MiniPdf $pdf;
-    private float $w;               // largeur page (pt)
-    private float $h;               // hauteur page (pt)
+    private float $w;
+    private float $h;
     private float $top;
     private float $bottom;
     private float $inner;
     private float $outer;
-    private int $pageNum = 0;       // numéro logique courant (1 = faux-titre)
+    private int $pageNum = 0;
     private array $chapterStarts = [];
     private string $runningRecto = '';
 
-    private const BODY_SIZE = 11.2;
-    private const LEADING   = 15.9;
-    private const BODY_FONT = 'Times-Roman';
+    private array $accent;                 // RVB accent (couverture)
+    private array $accentSoft;             // teinte claire de l'accent (fonds)
+    private array $ink = [26, 26, 23];
+    private array $gray = [110, 104, 92];
 
-    public function __construct(private array $geometry, private array $book, private array $project)
-    {
+    private string $titleFont = 'body';    // police des titres selon thème
+    private float $titleSize = 21.0;
+    private string $opener = 'editorial';  // style d'ouverture de chapitre
+
+    private const BODY_SIZE = 10.8;
+    private const LEADING   = 15.4;
+
+    public function __construct(
+        private array $geometry,
+        private array $book,
+        private array $project,
+        private string $theme,
+        string $accentHex
+    ) {
         $mm = fn (float $v): float => $v * 72 / 25.4;
         $this->w = $mm($geometry['w_mm']);
         $this->h = $mm($geometry['h_mm']);
@@ -62,29 +90,56 @@ final class PdfComposer
         $this->bottom = $mm($geometry['margin_bottom_mm']);
         $this->inner = $mm($geometry['margin_inner_mm']);
         $this->outer = $mm($geometry['margin_outer_mm']);
-        $this->pdf = new MiniPdf($this->w, $this->h);
+
+        $this->accent = self::hexRgb($accentHex);
+        $this->accentSoft = array_map(fn ($c) => (int) round($c + (255 - $c) * 0.88), $this->accent);
+
+        [$this->titleFont, $this->titleSize, $this->opener] = match ($theme) {
+            'moderne'  => ['sans', 18.0, 'number'],
+            'magazine' => ['display', 26.0, 'band'],
+            'elegant'  => ['display2', 21.0, 'centered'],
+            default    => ['body', 21.0, 'editorial'],
+        };
+
+        $this->pdf = $this->newPdf();
+    }
+
+    private function newPdf(): MiniPdf
+    {
+        $pdf = new MiniPdf($this->w, $this->h);
+        $fonts = APP_ROOT . '/app/fonts/';
+        $pdf->addTtf('body', $fonts . 'InstrumentSerif-Regular.ttf');
+        $pdf->addTtf('italic', $fonts . 'InstrumentSerif-Italic.ttf');
+        $pdf->addTtf('label', $fonts . 'IBMPlexMono-Medium.ttf');
+        $pdf->addTtf('sans', $fonts . 'Poppins-SemiBold.ttf');
+        if ($this->titleFont === 'display') {
+            $pdf->addTtf('display', $fonts . 'BebasNeue.ttf');
+        }
+        if ($this->titleFont === 'display2') {
+            $pdf->addTtf('display2', $fonts . 'DMSerifDisplay.ttf');
+        }
+        return $pdf;
     }
 
     public function compose(): string
     {
-        // 1) Corps composé d'abord (pour connaître les pages de départ des chapitres)
-        $bodyPdf = new MiniPdf($this->w, $this->h);
-        $this->pdf = $bodyPdf;
-        $this->pageNum = 8; // le corps démarre p.9 (8 pages liminaires réservées)
+        // 1) Corps composé d'abord (pages de départ des chapitres connues)
+        $this->pdf = $this->newPdf();
+        $bodyPdf = $this->pdf;
+        $this->pageNum = 8;
         $this->composeBody();
         $bodyPages = $bodyPdf->detachPages();
 
-        // 2) Pages liminaires avec le sommaire désormais paginé
-        $frontPdf = new MiniPdf($this->w, $this->h);
+        // 2) Pages liminaires avec le sommaire paginé, dans le MÊME document
+        $frontPdf = $this->newPdf();
         $this->pdf = $frontPdf;
         $this->pageNum = 0;
         $this->composeFrontMatter();
         while ($this->pageNum < 8) {
-            $this->newPage(); // compléments blancs jusqu'à p.8
+            $this->newPage('blank');
         }
-
         $frontPdf->appendPages($bodyPages);
-        if (($this->pageNum + count($bodyPages)) % 2 === 1) {
+        if (($this->pageNum + count($bodyPages['pages'])) % 2 === 1) {
             $frontPdf->addBlankPage();
         }
         return $frontPdf->build();
@@ -94,64 +149,95 @@ final class PdfComposer
 
     private function composeFrontMatter(): void
     {
-        $center = fn (float $y, string $font, float $size, string $text) =>
-            $this->pdf->text(($this->w - $this->pdf->width($text, $font, $size)) / 2, $y, $font, $size, $text);
+        $center = fn (float $y, string $font, float $size, string $text, ?array $rgb = null, float $tc = 0) =>
+            $this->pdf->text(($this->w - $this->pdf->width($text, $font, $size, $tc)) / 2, $y, $font, $size, $text, 0, $tc, $rgb);
 
         // p.1 — faux-titre
-        $this->newPage();
-        $center($this->h * 0.38, 'Times-Roman', 15, $this->book['title']);
+        $this->newPage('blank');
+        $center($this->h * 0.38, $this->titleFont, 14, $this->fitOneLine($this->book['title'], $this->titleFont, 14, $this->w * 0.8));
 
         // p.2 — blanche
-        $this->newPage();
+        $this->newPage('blank');
 
-        // p.3 — page de titre
-        $this->newPage();
+        // p.3 — page de titre (composition selon thème)
+        $this->newPage('blank');
+        $titleLines = $this->wrapText($this->book['title'], $this->titleFont, 26, $this->w * 0.72);
         $y = $this->h * 0.30;
-        foreach ($this->wrapCentered($this->book['title'], 'Times-Roman', 26, $this->w * 0.72) as $line) {
-            $center($y, 'Times-Roman', 26, $line);
+        switch ($this->opener) {
+            case 'band':
+                $this->pdf->rectRgb(0, $y - 46, $this->w, 8, $this->accent);
+                break;
+            case 'number':
+                $this->pdf->rectRgb(($this->w - 26) / 2, $y - 48, 26, 26, $this->accent);
+                break;
+            case 'centered':
+                $this->pdf->rectRgb(($this->w - 60) / 2, $y - 40, 60, 0.8, $this->ink);
+                break;
+            default:
+                $this->pdf->rectRgb(($this->w - 44) / 2, $y - 42, 44, 2.4, $this->accent);
+        }
+        foreach ($titleLines as $line) {
+            $center($y, $this->titleFont, 26, $line);
             $y += 32;
         }
         if ($this->book['subtitle'] !== '') {
-            $y += 6;
-            foreach ($this->wrapCentered($this->book['subtitle'], 'Times-Italic', 13, $this->w * 0.7) as $line) {
-                $center($y, 'Times-Italic', 13, $line);
+            $y += 8;
+            foreach ($this->wrapText($this->book['subtitle'], 'italic', 12.5, $this->w * 0.68) as $line) {
+                $center($y, 'italic', 12.5, $line, $this->gray);
                 $y += 17;
             }
         }
-        $center($y + 30, 'Helvetica', 11, mb_strtoupper($this->book['author']));
+        $center($this->h * 0.82, 'label', 10, mb_strtoupper($this->book['author']), $this->ink, 1.6);
 
         // p.4 — copyright
-        $this->newPage();
+        $this->newPage('blank');
         $lines = [
             '© ' . $this->book['year'] . ' ' . $this->book['author'] . '. Tous droits réservés.',
             'Aucune partie de ce livre ne peut être reproduite sans autorisation écrite.',
             'Publié en autoédition via Amazon Kindle Direct Publishing.',
         ];
-        $y = $this->h - $this->bottom - 60;
+        $y = $this->h - $this->bottom - 58;
         foreach ($lines as $line) {
-            $this->pdf->text($this->marginLeft(), $y, 'Times-Roman', 9, $line);
+            $this->pdf->text($this->marginLeft(), $y, 'body', 8.5, $line, 0, 0, $this->gray);
             $y += 13;
         }
 
-        // p.5-6 — sommaire
-        $this->newPage();
-        $center($this->top + 40, 'Times-Roman', 22, 'Sommaire');
-        $y = $this->top + 90;
-        $left = $this->marginLeft();
-        $right = $this->w - $this->marginRight();
+        // p.5+ — sommaire avec points de conduite
+        $this->newPage('blank');
+        $center($this->top + 42, $this->titleFont, 20, 'Sommaire');
+        if ($this->opener === 'editorial' || $this->opener === 'centered') {
+            $this->pdf->rectRgb(($this->w - 36) / 2, $this->top + 54, 36, 1.4, $this->accent);
+        }
+        $y = $this->top + 92;
         foreach ($this->book['chapters'] as $chapter) {
-            if ($y > $this->h - $this->bottom - 20) {
-                $this->newPage();
+            if ($y > $this->h - $this->bottom - 16) {
+                $this->newPage('blank');
                 $y = $this->top + 30;
-                $left = $this->marginLeft();
-                $right = $this->w - $this->marginRight();
             }
-            $label = (($chapter['role'] ?? 'chapter') === 'chapter' ? ($chapter['display_num'] ?? $chapter['num']) . '.  ' : '')
-                . $chapter['title'];
+            $left = $this->marginLeft();
+            $right = $this->w - $this->marginRight();
             $pageLabel = (string) ($this->chapterStarts[$chapter['num']] ?? '');
-            $this->pdf->text($left, $y, 'Times-Roman', 11.5, $this->truncate($label, 'Times-Roman', 11.5, $right - $left - 40));
-            $this->pdf->text($right - $this->pdf->width($pageLabel, 'Times-Roman', 11.5), $y, 'Times-Roman', 11.5, $pageLabel);
-            $y += 21;
+            $pageW = $this->pdf->width($pageLabel, 'label', 9.5);
+
+            $prefix = '';
+            if (($chapter['role'] ?? 'chapter') === 'chapter') {
+                $prefix = str_pad((string) ($chapter['display_num'] ?? $chapter['num']), 2, '0', STR_PAD_LEFT);
+                $this->pdf->text($left, $y, 'label', 9, $prefix, 0, 0, $this->accent);
+            }
+            $titleX = $left + 26;
+            $titleText = $this->fitOneLine($chapter['title'], 'body', 11.5, $right - $titleX - $pageW - 34);
+            $this->pdf->text($titleX, $y, 'body', 11.5, $titleText);
+
+            // Points de conduite
+            $dotsStart = $titleX + $this->pdf->width($titleText, 'body', 11.5) + 8;
+            $dotsEnd = $right - $pageW - 8;
+            if ($dotsEnd > $dotsStart + 10) {
+                $dotW = max(0.1, $this->pdf->width('·', 'body', 9));
+                $count = max(0, (int) floor(($dotsEnd - $dotsStart) / ($dotW * 2.2)));
+                $this->pdf->text($dotsStart, $y, 'body', 9, str_repeat('· ', $count), 0, 0, [180, 171, 148]);
+            }
+            $this->pdf->text($right - $pageW, $y, 'label', 9.5, $pageLabel, 0, 0, $this->gray);
+            $y += 21.5;
         }
     }
 
@@ -161,33 +247,20 @@ final class PdfComposer
     {
         foreach ($this->book['chapters'] as $chapter) {
             $this->runningRecto = $chapter['title'];
-            // Belle page : les chapitres ouvrent sur une page impaire (recto)
             if ($this->pageNum % 2 === 1) {
                 $this->newPage('blank');
             }
             $this->newPage('opener');
             $this->chapterStarts[$chapter['num']] = $this->pageNum;
 
-            $left = $this->marginLeft();
-            $width = $this->textWidth();
-            $y = $this->top + 46;
-
-            $this->pdf->text($left, $y, 'Helvetica', 8.5, mb_strtoupper((string) ($chapter['label'] ?? 'Chapitre ' . $chapter['num'])), 0, 2.2);
-            $y += 26;
-            foreach ($this->wrap($chapter['title'], 'Times-Roman', 21, $width) as $line) {
-                $this->pdf->text($left, $y, 'Times-Roman', 21, $line);
-                $y += 26;
-            }
-            $y += 18;
+            $y = $this->chapterOpener($chapter);
             $this->drawFolio();
 
             $imagesPlaced = false;
             foreach ($chapter['sections'] as $sIndex => $section) {
                 if ($sIndex > 0) {
-                    $y = $this->ensureRoom($y, 3 * self::LEADING + 30);
-                    $y += 12;
-                    $this->pdf->text($this->marginLeft(), $y, 'Times-Bold', 12.5, $this->truncate($section['title'], 'Times-Bold', 12.5, $this->textWidth()));
-                    $y += 22;
+                    $y = $this->ensureRoom($y, 3 * self::LEADING + 34);
+                    $y = $this->sectionHead($y, $section['title']);
                 }
                 $blocks = !empty($section['blocks'])
                     ? $section['blocks']
@@ -199,6 +272,7 @@ final class PdfComposer
                         foreach ((array) $block['items'] as $item) {
                             $y = $this->paragraph($y, '– ' . $item, false);
                         }
+                        $y += 3;
                     } else {
                         $y = $this->paragraph($y, (string) $block['text'], $bIndex > 0 || $sIndex > 0);
                     }
@@ -213,27 +287,120 @@ final class PdfComposer
         }
     }
 
+    /** Ouverture de chapitre selon le thème. Retourne l'ordonnée du texte. */
+    private function chapterOpener(array $chapter): float
+    {
+        $left = $this->marginLeft();
+        $width = $this->textWidth();
+        $label = mb_strtoupper((string) ($chapter['label'] ?? 'Chapitre'));
+        $isChapter = ($chapter['role'] ?? 'chapter') === 'chapter';
+        $displayNum = (string) ($chapter['display_num'] ?? '');
+
+        switch ($this->opener) {
+            case 'band':
+                // Bandeau accent pleine largeur, titre réversé
+                $bandH = 108.0;
+                $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
+                $this->pdf->text($left, 40, 'label', 8, $label, 0, 2.4, [255, 255, 255]);
+                $ty = 70.0;
+                foreach ($this->wrapText($chapter['title'], 'display', 25, $width) as $i => $line) {
+                    if ($ty > $bandH - 10) {
+                        break;
+                    }
+                    $this->pdf->text($left, $ty, 'display', 25, $line, 0, 0.6, [255, 255, 255]);
+                    $ty += 28;
+                }
+                return $bandH + 30;
+
+            case 'number':
+                // Grand numéro accent + titre sans-serif
+                $y = $this->top + 40;
+                if ($isChapter && $displayNum !== '') {
+                    $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
+                    $numW = $this->pdf->width($numText, 'sans', 58);
+                    $this->pdf->text($this->w - $this->marginRight() - $numW, $y + 18, 'sans', 58, $numText, 0, 0, $this->accentMid());
+                }
+                $this->pdf->text($left, $y, 'label', 8, $label, 0, 2.4, $this->gray);
+                $y += 24;
+                foreach ($this->wrapText($chapter['title'], 'sans', 19, $width - ($isChapter ? 80 : 0)) as $line) {
+                    $this->pdf->text($left, $y, 'sans', 19, $line);
+                    $y += 25;
+                }
+                $this->pdf->rectRgb($left, $y + 4, 34, 2.6, $this->accent);
+                return $y + 30;
+
+            case 'centered':
+                // Composition centrée, filets fins
+                $y = $this->top + 44;
+                $this->centerText($y, 'label', 7.5, $label, $this->gray, 3.0);
+                $y += 18;
+                $this->pdf->rectRgb(($this->w - 46) / 2, $y, 46, 0.7, $this->ink);
+                $y += 26;
+                foreach ($this->wrapText($chapter['title'], 'display2', 21, $width * 0.86) as $line) {
+                    $this->centerText($y, 'display2', 21, $line);
+                    $y += 27;
+                }
+                $y += 6;
+                $this->pdf->rectRgb(($this->w - 46) / 2, $y, 46, 0.7, $this->ink);
+                return $y + 28;
+
+            default:
+                // Éditorial : kicker mono accent + filet + grand titre serif
+                $y = $this->top + 46;
+                $this->pdf->text($left, $y, 'label', 8, $label, 0, 2.4, $this->accent);
+                $y += 12;
+                $this->pdf->rectRgb($left, $y, 30, 2.2, $this->accent);
+                $y += 26;
+                foreach ($this->wrapText($chapter['title'], 'body', 21, $width) as $line) {
+                    $this->pdf->text($left, $y, 'body', 21, $line);
+                    $y += 26;
+                }
+                return $y + 16;
+        }
+    }
+
+    private function sectionHead(float $y, string $title): float
+    {
+        $left = $this->marginLeft();
+        $y += 10;
+        switch ($this->opener) {
+            case 'band':
+                $this->pdf->rectRgb($left, $y - 8, 3, 14, $this->accent);
+                $this->pdf->text($left + 10, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $this->textWidth() - 10));
+                break;
+            case 'number':
+                $this->pdf->text($left, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $this->textWidth()), 0, 0, $this->accentDark());
+                break;
+            case 'centered':
+                $this->centerText($y + 3, 'display2', 12.5, $this->fitOneLine($title, 'display2', 12.5, $this->textWidth() * 0.9));
+                break;
+            default:
+                $this->pdf->text($left, $y + 3, 'body', 13, $this->fitOneLine($title, 'body', 13, $this->textWidth()));
+        }
+        return $y + 24;
+    }
+
     /** Écrit un paragraphe justifié, avec coupure de page automatique. */
     private function paragraph(float $y, string $text, bool $indent): float
     {
         $isList = str_starts_with(trim($text), '–') || str_starts_with(trim($text), '-') || str_starts_with(trim($text), '•');
         $width = $this->textWidth();
-        $indentPt = $indent && !$isList ? 14.0 : 0.0;
-        $lines = $this->justify($text, self::BODY_FONT, self::BODY_SIZE, $width, $indentPt, $isList ? 12.0 : 0.0);
+        $indentPt = $indent && !$isList ? 13.0 : 0.0;
+        $lines = $this->justify($text, 'body', self::BODY_SIZE, $width, $indentPt, $isList ? 11.0 : 0.0);
 
-        foreach ($lines as $i => $line) {
+        foreach ($lines as $line) {
             if ($y > $this->h - $this->bottom - 4) {
                 $this->newPage();
                 $y = $this->top + 16;
             }
             $x = $this->marginLeft() + $line['x'];
-            $this->pdf->text($x, $y, self::BODY_FONT, self::BODY_SIZE, $line['text'], $line['tw']);
+            $this->pdf->text($x, $y, 'body', self::BODY_SIZE, $line['text'], $line['tw']);
             $y += self::LEADING;
         }
-        return $y + 5;
+        return $y + 4.5;
     }
 
-    /** Encadré éditorial : boîte flat avec filet, étiquette et texte. */
+    /** Encadré éditorial : boîte teintée accent, étiquette, texte sans-serif. */
     private function callout(float $y, string $kind, string $text): float
     {
         $labels = \App\Core\Util::CALLOUTS;
@@ -242,39 +409,45 @@ final class PdfComposer
         $pad = 12.0;
         $innerW = $width - 2 * $pad - 6;
 
-        // Pré-calcul de la hauteur (paragraphes du texte, police Helvetica 9.5)
         $lines = [];
         foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $i => $paragraph) {
             if ($i > 0) {
                 $lines[] = '';
             }
-            foreach ($this->wrap(trim($paragraph), 'Helvetica', 9.5, $innerW) as $line) {
+            foreach ($this->wrapText(trim($paragraph), 'body', 9.6, $innerW) as $line) {
                 $lines[] = $line;
             }
         }
-        $lineH = 13.2;
-        $boxH = 14 + 14 + count($lines) * $lineH + $pad;
+        $lineH = 13.4;
+        $boxH = 30 + count($lines) * $lineH + $pad * 0.7;
 
-        // Trop haut pour tenir sur une page : repli en texte simple préfixé
         if ($boxH > $this->h - $this->top - $this->bottom - 20) {
             return $this->paragraph($y, ($labels[$kind] ?? $kind) . ' — ' . str_replace("\n", ' ', $text), false);
         }
         $y = $this->ensureRoom($y, $boxH + 10);
         $y += 4;
-
         $left = $this->marginLeft();
-        $this->pdf->rect($left, $y, $width, $boxH, 0.945);        // fond
-        $this->pdf->rect($left, $y, 3.2, $boxH, 0.30);            // filet gauche
-        $ty = $y + $pad + 2;
-        $this->pdf->text($left + $pad + 6, $ty, 'Helvetica', 7.5, $label, 0, 1.8);
-        $ty += 16;
+
+        if ($this->opener === 'centered') {
+            // Élégant : hairlines, pas de fond
+            $this->pdf->rectRgb($left, $y, $width, 0.6, $this->ink);
+            $this->pdf->rectRgb($left, $y + $boxH, $width, 0.6, $this->ink);
+            $tx = $left + 2;
+        } else {
+            $this->pdf->rectRgb($left, $y, $width, $boxH, $this->accentSoft);
+            $this->pdf->rectRgb($left, $y, 3.4, $boxH, $this->accent);
+            $tx = $left + $pad + 6;
+        }
+        $ty = $y + $pad + 3;
+        $this->pdf->text($tx, $ty, 'label', 7.2, $label, 0, 2.0, $this->accentDark());
+        $ty += 17;
         foreach ($lines as $line) {
             if ($line !== '') {
-                $this->pdf->text($left + $pad + 6, $ty, 'Helvetica', 9.5, $line);
+                $this->pdf->text($tx, $ty, 'body', 9.6, $line);
             }
             $ty += $lineH;
         }
-        return $y + $boxH + 10;
+        return $y + $boxH + 11;
     }
 
     /** Emplacement visuel : image JPEG incorporée ou cadre réservé légendé. */
@@ -282,8 +455,7 @@ final class PdfComposer
     {
         $width = $this->textWidth();
         $height = $width * 2 / 3;
-        $needed = $height + 40;
-        $y = $this->ensureRoom($y, $needed);
+        $y = $this->ensureRoom($y, $height + 40);
         $y += 8;
 
         $uploads = (string) Config::get('paths.uploads');
@@ -300,7 +472,7 @@ final class PdfComposer
         }
         $y += $height + 14;
         $caption = 'Fig. ' . $chapterNum . '.' . $image['slot'] . ' — ' . ($image['caption'] ?: 'Visuel');
-        $this->pdf->text($this->marginLeft(), $y, 'Times-Italic', 9.5, $this->truncate($caption, 'Times-Italic', 9.5, $width));
+        $this->pdf->text($this->marginLeft(), $y, 'italic', 9, $this->fitOneLine($caption, 'italic', 9, $width), 0, 0, $this->gray);
         return $y + 18;
     }
 
@@ -308,13 +480,14 @@ final class PdfComposer
     {
         $this->pdf->rect($this->marginLeft(), $y, $width, $height, 0.93);
         $label = 'Emplacement visuel — ' . ($image['spec'] ?: '300 dpi');
-        $x = $this->marginLeft() + ($width - $this->pdf->width($label, 'Helvetica', 9)) / 2;
-        $this->pdf->text($x, $y + $height / 2, 'Helvetica', 9, $label);
+        $label = $this->fitOneLine($label, 'label', 8, $width - 20);
+        $x = $this->marginLeft() + ($width - $this->pdf->width($label, 'label', 8)) / 2;
+        $this->pdf->text($x, $y + $height / 2, 'label', 8, $label, 0, 0, $this->gray);
     }
 
-    // ── Aides de composition ───────────────────────────────────────────────
+    // ── Habillage de page ──────────────────────────────────────────────────
 
-    /** $kind : 'normal' (titre courant + folio), 'opener' (folio posé plus tard), 'blank' (rien). */
+    /** $kind : 'normal' (titre courant + folio), 'opener' (folio seul), 'blank' (rien). */
     private function newPage(string $kind = 'normal'): void
     {
         $this->pageNum++;
@@ -328,22 +501,39 @@ final class PdfComposer
     private function drawRunningHead(): void
     {
         $isRecto = $this->pageNum % 2 === 1;
-        $text = mb_strtoupper($isRecto ? ($this->runningRecto ?: $this->book['title']) : $this->book['title']);
-        $text = $this->truncate($text, 'Helvetica', 7.5, $this->textWidth() * 0.8);
+        $text = $isRecto ? ($this->runningRecto ?: $this->book['title']) : $this->book['title'];
+        if ($this->opener === 'centered') {
+            $text = $this->fitOneLine($text, 'italic', 8.5, $this->textWidth() * 0.8);
+            $this->centerText($this->top - 14, 'italic', 8.5, $text, $this->gray);
+            return;
+        }
+        $text = mb_strtoupper($this->fitOneLine($text, 'label', 6.6, $this->textWidth() * 0.72));
         $x = $isRecto
-            ? $this->w - $this->marginRight() - $this->pdf->width($text, 'Helvetica', 7.5, 1.6)
+            ? $this->w - $this->marginRight() - $this->pdf->width($text, 'label', 6.6, 1.4)
             : $this->marginLeft();
-        $this->pdf->text($x, $this->top - 14, 'Helvetica', 7.5, $text, 0, 1.6);
+        $this->pdf->text($x, $this->top - 14, 'label', 6.6, $text, 0, 1.4, $this->gray);
     }
 
     private function drawFolio(): void
     {
         $folio = (string) $this->pageNum;
+        if ($this->opener === 'centered') {
+            $this->centerText($this->h - $this->bottom + 22, 'body', 9.5, $folio, $this->gray);
+            return;
+        }
         $isRecto = $this->pageNum % 2 === 1;
         $x = $isRecto
-            ? $this->w - $this->marginRight() - $this->pdf->width($folio, 'Times-Roman', 9.5)
+            ? $this->w - $this->marginRight() - $this->pdf->width($folio, 'label', 8.5)
             : $this->marginLeft();
-        $this->pdf->text($x, $this->h - $this->bottom + 22, 'Times-Roman', 9.5, $folio);
+        $this->pdf->text($x, $this->h - $this->bottom + 22, 'label', 8.5, $folio, 0, 0, $this->gray);
+    }
+
+    // ── Aides ──────────────────────────────────────────────────────────────
+
+    private function centerText(float $y, string $font, float $size, string $text, ?array $rgb = null, float $tc = 0): void
+    {
+        $x = ($this->w - $this->pdf->width($text, $font, $size, $tc)) / 2;
+        $this->pdf->text($x, $y, $font, $size, $text, 0, $tc, $rgb);
     }
 
     private function ensureRoom(float $y, float $needed): float
@@ -368,6 +558,28 @@ final class PdfComposer
     private function textWidth(): float
     {
         return $this->w - $this->inner - $this->outer;
+    }
+
+    private function accentDark(): array
+    {
+        return array_map(fn ($c) => (int) round($c * 0.62), $this->accent);
+    }
+
+    private function accentMid(): array
+    {
+        return array_map(fn ($c) => (int) round($c + (255 - $c) * 0.45), $this->accent);
+    }
+
+    private static function hexRgb(string $hex): array
+    {
+        $hex = ltrim($hex, '#');
+        if (strlen($hex) === 3) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        if (!preg_match('/^[0-9a-fA-F]{6}$/', $hex)) {
+            $hex = 'C4571F';
+        }
+        return [(int) hexdec(substr($hex, 0, 2)), (int) hexdec(substr($hex, 2, 2)), (int) hexdec(substr($hex, 4, 2))];
     }
 
     /** Coupe un texte en lignes justifiées : [{text,x,tw}] */
@@ -404,23 +616,18 @@ final class PdfComposer
             $out[] = [
                 'text' => implode(' ', $line['words']),
                 'x'    => $index === 0 ? $firstIndent : $hang,
-                'tw'   => max(0.0, min(6.0, $tw)),
+                'tw'   => max(0.0, min(5.5, $tw)),
             ];
         }
         return $out;
     }
 
-    private function wrap(string $text, string $font, float $size, float $maxWidth): array
+    private function wrapText(string $text, string $font, float $size, float $maxWidth): array
     {
         return array_map(fn ($l) => $l['text'], $this->justify($text, $font, $size, $maxWidth, 0, 0));
     }
 
-    private function wrapCentered(string $text, string $font, float $size, float $maxWidth): array
-    {
-        return $this->wrap($text, $font, $size, $maxWidth);
-    }
-
-    private function truncate(string $text, string $font, float $size, float $maxWidth): string
+    private function fitOneLine(string $text, string $font, float $size, float $maxWidth): string
     {
         if ($this->pdf->width($text, $font, $size) <= $maxWidth) {
             return $text;
@@ -431,8 +638,7 @@ final class PdfComposer
         return rtrim($text) . '…';
     }
 }
-
-/** Writer PDF bas niveau : polices de base, WinAnsi, JPEG, Flate. */
+/** Writer PDF bas niveau : polices de base + TTF INCORPORÉES, JPEG, Flate, RVB. */
 final class MiniPdf
 {
     private array $metrics;
@@ -441,14 +647,33 @@ final class MiniPdf
     private string $current = '';
     private bool $open = false;
     private array $images = [];   // name => [data, w, h, colorspace]
+    /** @var array<string,array{ttf:TtfFont,id:string}> polices TTF incorporées */
+    private array $ttf = [];
+    private int $fontCounter = 0;
 
     public function __construct(private float $w, private float $h)
     {
         $this->metrics = require APP_ROOT . '/app/Core/corefonts.php';
-        $i = 1;
         foreach (array_keys($this->metrics) as $font) {
-            $this->fontIds[$font] = 'F' . $i++;
+            $this->fontIds[$font] = 'F' . (++$this->fontCounter);
         }
+    }
+
+    /**
+     * Déclare une police TTF incorporée sous un alias utilisable dans text().
+     * La police est EMBARQUÉE intégralement dans le PDF (exigence KDP).
+     */
+    public function addTtf(string $alias, string $file): void
+    {
+        if (isset($this->ttf[$alias])) {
+            return;
+        }
+        $this->ttf[$alias] = ['ttf' => TtfFont::load($file), 'id' => 'F' . (++$this->fontCounter)];
+    }
+
+    public function hasTtf(string $alias): bool
+    {
+        return isset($this->ttf[$alias]);
     }
 
     public function newPage(): void
@@ -490,21 +715,60 @@ final class MiniPdf
         }
     }
 
-    /** y mesuré depuis le HAUT de la page (converti en interne). */
-    public function text(float $x, float $y, string $font, float $size, string $str, float $wordSpacing = 0, float $charSpacing = 0): void
+    /** @var array<string,bool> polices de base réellement utilisées */
+    private array $usedCore = [];
+
+    /** y mesuré depuis le HAUT de la page (converti en interne). $rgb : [0-255,0-255,0-255]. */
+    public function text(float $x, float $y, string $font, float $size, string $str, float $wordSpacing = 0, float $charSpacing = 0, ?array $rgb = null): void
     {
+        if (!isset($this->ttf[$font]) && isset($this->fontIds[$font])) {
+            $this->usedCore[$font] = true;
+        }
+        $yPdf = $this->h - $y;
+        $color = $rgb
+            ? sprintf('%.3F %.3F %.3F rg ', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255)
+            : '';
+        if (isset($this->ttf[$font])) {
+            // Police incorporée : texte encodé en identifiants de glyphes (Identity-H)
+            $hex = $this->ttf[$font]['ttf']->gidHex($str);
+            // L'espacement mot (Tw) est inopérant en Identity-H : simulé via TJ
+            if ($wordSpacing > 0.01) {
+                $spaceHex = $this->ttf[$font]['ttf']->gidHex(' ');
+                $adjust = -$wordSpacing * 1000 / $size;
+                $parts = explode($spaceHex, $hex);
+                $tj = implode('> ' . sprintf('%.1F', $adjust) . ' <' . $spaceHex, $parts);
+                $this->current .= sprintf(
+                    "BT %s/%s %.2F Tf %.3F Tc %.2F %.2F Td [<%s>] TJ ET %s\n",
+                    $color, $this->ttf[$font]['id'], $size, $charSpacing, $x, $yPdf, $tj, $rgb ? '0 0 0 rg' : ''
+                );
+            } else {
+                $this->current .= sprintf(
+                    "BT %s/%s %.2F Tf %.3F Tc %.2F %.2F Td <%s> Tj ET %s\n",
+                    $color, $this->ttf[$font]['id'], $size, $charSpacing, $x, $yPdf, $hex, $rgb ? '0 0 0 rg' : ''
+                );
+            }
+            return;
+        }
         $id = $this->fontIds[$font] ?? 'F1';
         $encoded = $this->escape($this->toWinAnsi($str));
-        $yPdf = $this->h - $y;
         $this->current .= sprintf(
-            "BT /%s %.2F Tf %.3F Tw %.3F Tc %.2F %.2F Td (%s) Tj ET\n",
-            $id, $size, $wordSpacing, $charSpacing, $x, $yPdf, $encoded
+            "BT %s/%s %.2F Tf %.3F Tw %.3F Tc %.2F %.2F Td (%s) Tj ET %s\n",
+            $color, $id, $size, $wordSpacing, $charSpacing, $x, $yPdf, $encoded, $rgb ? '0 0 0 rg' : ''
         );
     }
 
     public function rect(float $x, float $y, float $w, float $h, float $gray): void
     {
         $this->current .= sprintf("%.3F g %.2F %.2F %.2F %.2F re f 0 g\n", $gray, $x, $this->h - $y - $h, $w, $h);
+    }
+
+    /** Rectangle plein en couleur RVB. */
+    public function rectRgb(float $x, float $y, float $w, float $h, array $rgb): void
+    {
+        $this->current .= sprintf(
+            "%.3F %.3F %.3F rg %.2F %.2F %.2F %.2F re f 0 g\n",
+            $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255, $x, $this->h - $y - $h, $w, $h
+        );
     }
 
     public function image(string $name, float $x, float $y, float $w, float $h): void
@@ -531,6 +795,10 @@ final class MiniPdf
     /** Largeur d'une chaîne en points. */
     public function width(string $str, string $font, float $size, float $charSpacing = 0): float
     {
+        if (isset($this->ttf[$font])) {
+            $chars = max(0, mb_strlen($str) - 1);
+            return $this->ttf[$font]['ttf']->widthMilli($str) * $size / 1000 + $charSpacing * $chars;
+        }
         $widths = $this->metrics[$font] ?? $this->metrics['Times-Roman'];
         $encoded = $this->toWinAnsi($str);
         $total = 0;
@@ -554,11 +822,47 @@ final class MiniPdf
             return count($objects);
         };
 
-        // Polices
+        // Polices de base : uniquement celles réellement utilisées (un livre
+        // composé en polices incorporées n'en déclare aucune → conformité KDP)
         $fontRefs = [];
         foreach ($this->fontIds as $name => $id) {
+            if (empty($this->usedCore[$name])) {
+                continue;
+            }
             $num = $add("<< /Type /Font /Subtype /Type1 /BaseFont /$name /Encoding /WinAnsiEncoding >>");
             $fontRefs[$id] = $num;
+        }
+
+        // Polices TTF INCORPORÉES (Type0 / CIDFontType2 / Identity-H)
+        foreach ($this->ttf as $entry) {
+            $ttf = $entry['ttf'];
+            $raw = (string) file_get_contents($ttf->file);
+            $stream = function_exists('gzcompress') ? gzcompress($raw) : $raw;
+            $filter = function_exists('gzcompress') ? ' /Filter /FlateDecode' : '';
+            $fileNum = $add('<< /Length ' . strlen($stream) . ' /Length1 ' . strlen($raw) . "$filter >>\nstream\n" . $stream . "\nendstream");
+
+            $scale = 1000 / $ttf->unitsPerEm;
+            $bbox = implode(' ', array_map(fn ($v) => (int) round($v * $scale), $ttf->bbox));
+            $descNum = $add('<< /Type /FontDescriptor /FontName /' . $ttf->postScriptName
+                . ' /Flags 4 /FontBBox [' . $bbox . ']'
+                . ' /ItalicAngle ' . sprintf('%.1F', $ttf->italicAngle)
+                . ' /Ascent ' . (int) round($ttf->ascent * $scale)
+                . ' /Descent ' . (int) round($ttf->descent * $scale)
+                . ' /CapHeight ' . (int) round($ttf->capHeight * $scale)
+                . ' /StemV 80 /FontFile2 ' . $fileNum . ' 0 R >>');
+
+            $widths = [];
+            for ($gid = 0; $gid < $ttf->numGlyphs; $gid++) {
+                $widths[] = (int) round(($ttf->advances[$gid] ?? 500) * $scale);
+            }
+            $cidNum = $add('<< /Type /Font /Subtype /CIDFontType2 /BaseFont /' . $ttf->postScriptName
+                . ' /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>'
+                . ' /FontDescriptor ' . $descNum . ' 0 R /DW 500 /W [0 [' . implode(' ', $widths) . ']]'
+                . ' /CIDToGIDMap /Identity >>');
+
+            $typeZero = $add('<< /Type /Font /Subtype /Type0 /BaseFont /' . $ttf->postScriptName
+                . ' /Encoding /Identity-H /DescendantFonts [' . $cidNum . ' 0 R] >>');
+            $fontRefs[$entry['id']] = $typeZero;
         }
         // Images
         $imageRefs = [];

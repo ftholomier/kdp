@@ -490,8 +490,29 @@ final class Router
                 @set_time_limit(300);
                 $project = self::project((int) Http::in('id'), $userId);
                 $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
-                $file = PdfBook::build($project, $book);
+                // Thème choisi + couleur d'accent héritée de la couverture
+                $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
+                $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
+                $file = PdfBook::build(
+                    $project, $book,
+                    (string) ($project['interior_theme'] ?? 'editorial'),
+                    (string) ($coverPalette['c2'] ?? '#C4571F')
+                );
                 self::download($file, Util::slug($book['title']) . '-interieur.pdf', 'application/pdf');
+
+            case 'interior/themes':
+                $project = self::project((int) Http::in('id'), $userId);
+                $current = (string) ($project['interior_theme'] ?? 'editorial');
+                $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
+                $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
+                $accent = (string) ($coverPalette['c2'] ?? '#C4571F');
+                Http::ok(['themes' => array_map(fn ($slug, $meta) => [
+                    'slug'     => $slug,
+                    'name'     => $meta['name'],
+                    'desc'     => $meta['desc'],
+                    'thumb'    => \App\Services\InteriorThemes::thumb($slug, $accent),
+                    'selected' => $slug === $current,
+                ], array_keys(PdfBook::THEMES), PdfBook::THEMES)]);
 
             case 'export/docx':
                 @set_time_limit(120);
@@ -695,6 +716,7 @@ final class Router
             'photo_style' => fn ($v) => in_array($v, ['nb', 'couleur', 'schemas'], true) ? $v : 'nb',
             'tone'        => fn ($v) => mb_substr(trim((string) $v), 0, 50),
             'trim_format' => fn ($v) => Config::get('trims.' . $v) ? $v : '6x9',
+            'interior_theme' => fn ($v) => isset(PdfBook::THEMES[$v]) ? $v : 'editorial',
         ];
         foreach ($map as $key => $clean) {
             if (array_key_exists($key, $input)) {

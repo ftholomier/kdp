@@ -18,6 +18,7 @@ final class Migrations
         $done = true;
 
         self::ensureColumn('projects', 'final_pages', 'SMALLINT UNSIGNED NULL AFTER pages');
+        self::ensureColumn('projects', 'interior_theme', "VARCHAR(20) NOT NULL DEFAULT 'editorial' AFTER trim_format");
         self::ensureColumn('chapters', 'role', "ENUM('chapter','intro','conclusion') NOT NULL DEFAULT 'chapter' AFTER num");
         self::ensureColumn('covers', 'layout_json', 'MEDIUMTEXT NULL');
     }

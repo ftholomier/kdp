@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS projects (
     photo_style    ENUM('nb','couleur','schemas') NOT NULL DEFAULT 'nb',
     tone           VARCHAR(50) NOT NULL DEFAULT 'Pratique et direct',
     trim_format    VARCHAR(8) NOT NULL DEFAULT '6x9',
+    interior_theme VARCHAR(20) NOT NULL DEFAULT 'editorial',  -- thème de mise en page intérieure
     toc_json       MEDIUMTEXT NULL,
     writing_status ENUM('idle','running','paused','done') NOT NULL DEFAULT 'idle',
     created_at     DATETIME NOT NULL,

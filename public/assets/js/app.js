@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-11 · c17';
+  const BUILD = '2026-08-12 · c18';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1149,6 +1149,17 @@
           </div>`).join('')}
         </div>
 
+        ${(S.layoutOptions || []).length ? `
+        <div class="layout-composer">
+          <div class="title" style="margin-bottom:4px;">🧩 Composer la mise en page</div>
+          <div class="sub" style="margin-bottom:12px;">Cochez vos ingrédients — l'aperçu se recompose à chaque changement.${theme === 'premium' || theme === 'premium2' ? '' : ' <strong style="font-weight:600;">S\'applique aux thèmes Premium.</strong>'}</div>
+          ${S.layoutOptions.map(o => `
+          <label class="composer-row ${o.on ? 'on' : ''}" title="${esc(o.desc)}">
+            <input type="checkbox" ${o.on ? 'checked' : ''} onchange="App.toggleLayoutOpt('${esc(o.key)}', this.checked)">
+            <span class="k">${esc(o.name)}</span>
+          </label>`).join('')}
+        </div>` : ''}
+
         <div class="title">Réglages d'impression</div>
         <div class="sub">Conformes aux gabarits KDP broché.</div>
         ${!L ? loadingCard('Calculs en cours…') : `
@@ -1191,6 +1202,7 @@
       if (!S.interiorThemes) {
         const themes = await Api.get('interior/themes', { id: S.project.id });
         S.interiorThemes = themes.themes;
+        S.layoutOptions = themes.options || [];
         render();
       }
     } catch (e) { toast(e.message, true); }
@@ -2192,6 +2204,26 @@
         const t = (S.interiorThemes || []).find(x => x.slug === slug);
         toast('Mise en page « ' + ((t && t.name) || slug) + ' » appliquée — l\'aperçu se recompose.');
       } catch (e) { toast(e.message, true); }
+    },
+
+    async toggleLayoutOpt(key, checked) {
+      const opts = S.layoutOptions || [];
+      const opt = opts.find(o => o.key === key);
+      if (!opt) return;
+      // Garde-fou : au moins un gabarit de colonnes coché
+      if (!checked && ['col1', 'col2', 'col3'].includes(key)
+          && !opts.some(o => ['col1', 'col2', 'col3'].includes(o.key) && o.key !== key && o.on)) {
+        toast('Gardez au moins un gabarit de colonnes (1, 2 ou 3 colonnes).', true);
+        render();
+        return;
+      }
+      opt.on = checked;
+      const payload = {};
+      opts.forEach(o => { payload[o.key] = !!o.on; });
+      try {
+        await Api.post('projects/update', { id: S.project.id, layout_options: payload });
+        render(); // l'aperçu PDF se recompose avec les nouveaux ingrédients
+      } catch (e) { opt.on = !checked; render(); toast(e.message, true); }
     },
 
     async setFinalPages(value) {

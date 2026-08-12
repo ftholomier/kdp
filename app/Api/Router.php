@@ -607,13 +607,23 @@ final class Router
                 $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
                 $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
                 $accent = (string) ($coverPalette['c2'] ?? '#C4571F');
-                Http::ok(['themes' => array_map(fn ($slug, $meta) => [
-                    'slug'     => $slug,
-                    'name'     => $meta['name'],
-                    'desc'     => $meta['desc'],
-                    'thumb'    => \App\Services\InteriorThemes::thumb($slug, $accent),
-                    'selected' => $slug === $current,
-                ], array_keys(PdfBook::THEMES), PdfBook::THEMES)]);
+                $effective = PdfBook::layoutOptions($project);
+                Http::ok([
+                    'themes' => array_map(fn ($slug, $meta) => [
+                        'slug'     => $slug,
+                        'name'     => $meta['name'],
+                        'desc'     => $meta['desc'],
+                        'thumb'    => \App\Services\InteriorThemes::thumb($slug, $accent),
+                        'selected' => $slug === $current,
+                    ], array_keys(PdfBook::THEMES), PdfBook::THEMES),
+                    // Composeur : ingrédients de mise en page + état coché
+                    'options' => array_map(fn ($key, $meta) => [
+                        'key'  => $key,
+                        'name' => $meta['name'],
+                        'desc' => $meta['desc'],
+                        'on'   => (bool) $effective[$key],
+                    ], array_keys(PdfBook::LAYOUT_OPTIONS), PdfBook::LAYOUT_OPTIONS),
+                ]);
 
             case 'export/docx':
                 @set_time_limit(120);
@@ -825,6 +835,15 @@ final class Router
             'tone'        => fn ($v) => mb_substr(trim((string) $v), 0, 50),
             'trim_format' => fn ($v) => Config::get('trims.' . $v) ? $v : '6x9',
             'interior_theme' => fn ($v) => isset(PdfBook::THEMES[$v]) ? $v : 'editorial',
+            'layout_options' => function ($v) {
+                $clean = [];
+                foreach (array_keys(PdfBook::LAYOUT_OPTIONS) as $key) {
+                    if (is_array($v) && array_key_exists($key, $v)) {
+                        $clean[$key] = (bool) $v[$key];
+                    }
+                }
+                return json_encode($clean);
+            },
         ];
         foreach ($map as $key => $clean) {
             if (array_key_exists($key, $input)) {

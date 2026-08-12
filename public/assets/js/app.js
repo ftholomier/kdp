@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-12 · c19';
+  const BUILD = '2026-08-12 · c20';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -88,13 +88,21 @@
         continue;
       }
       const open = trimmed.match(/^:::\s*([a-zé]+)\s*$/);
-      if (!callout && open && CALLOUT_LABELS[open[1]]) {
+      if (!callout && open && (CALLOUT_LABELS[open[1]] || open[1] === 'tableau')) {
         flush();
         callout = { kind: open[1], lines: [] };
         continue;
       }
       if (callout && /^:::\s*$/.test(trimmed)) {
         const content = callout.lines.join('\n').trim();
+        if (callout.kind === 'tableau') {
+          const rows = content.split('\n').map(r => r.trim()).filter(Boolean)
+            .map(r => r.split('|').map(c => c.trim())).filter(cells => cells.length >= 2);
+          if (rows.length >= 2) blocks.push({ t: 'table', head: rows.shift(), rows });
+          else if (content) blocks.push({ t: 'p', text: content.replace(/\n/g, ' ') });
+          callout = null;
+          continue;
+        }
         if (content) blocks.push({ t: 'call', kind: callout.kind, text: content });
         callout = null;
         continue;
@@ -123,6 +131,9 @@
       }
       if (block.t === 'h') {
         return `<h4 class="reader-subhead">${esc(block.text)}</h4>`;
+      }
+      if (block.t === 'table') {
+        return `<table class="reader-table"><thead><tr>${block.head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${block.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
       }
       return `<p>${esc(block.text)}</p>`;
     }).join('');
@@ -262,6 +273,7 @@
         <div class="card-actions" onclick="event.stopPropagation()">
           <span onclick="App.duplicateProject(${p.id})" title="Nouveau livre avec les mêmes réglages (format, thème, recette de mise en page, palette)">⧉ Dupliquer</span>
           <span onclick="window.open('api.php?r=projects/export&id=${p.id}', '_blank')" title="Sauvegarde complète du projet (JSON, images incluses)">⬇ Sauvegarder</span>
+          ${p.writing_status === 'done' && !p.translate_from ? `<span onclick="App.translateProject(${p.id})" title="Créer la version étrangère : structure et couverture traduites, chaque section traduite à l'étape 05">🌍 Traduire</span>` : ''}
         </div>
       </div>`).join('');
 
@@ -890,6 +902,7 @@
                 : running
                   ? `<button class="btn btn-light" onclick="App.pauseWriting()">Mettre en pause</button>`
                   : `<button class="btn btn-light" onclick="App.startWriting()">${st.progress > 0 ? 'Reprendre la rédaction' : 'Lancer la rédaction'}</button>`}
+              <button class="btn btn-outline-light" onclick="App.showCronInfo()" title="Le livre s'écrit tout seul via la tâche cron de votre hébergeur, même PC éteint — e-mail à la fin.">⚙ Écriture autonome (cron)</button>
             </div>
           </div>
 
@@ -1079,6 +1092,9 @@
 
       <div class="reader-tools">
         <div class="title">Retravailler ce chapitre</div>
+        <div class="tool-action" onclick="App.proofreadBook()" style="border-color:var(--accent);">
+          <span>${S.busy.proofread ? 'Relecture en cours…' : '🪄 Relire tout le livre (orthographe)'}</span><span class="arrow">›</span>
+        </div>
         ${[
           ['rewrite', 'Réécrire avec un autre ton'],
           ['extend', 'Allonger de 400 mots'],
@@ -1700,10 +1716,36 @@
           <label>Prix broché (€)<input type="number" step="0.01" id="kdp-price" value="${meta.price != null ? meta.price : ''}"></label>
           <label>ISBN (vide = attribué par KDP)<input type="text" id="kdp-isbn" value="${esc(meta.isbn)}"></label>
         </div>
+        <div class="row"><label>ASIN une fois publié <span class="faint" style="font-size:11px;">(active le suivi de classement des mots-clés)</span><input type="text" id="kdp-asin" value="${esc(meta.asin || '')}" placeholder="B0XXXXXXXX"></label></div>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
           <button class="btn btn-soft" onclick="App.generateKdpMeta()" ${S.busy.kdpgen ? 'disabled' : ''}>${S.busy.kdpgen ? 'Génération…' : '✦ Générer avec l’IA'}</button>
           <button class="btn btn-primary" onclick="App.saveKdpMeta()" ${S.busy.kdpsave ? 'disabled' : ''}>${S.busy.kdpsave ? 'Enregistrement…' : 'Enregistrer les métadonnées'}</button>
         </div>
+
+        <hr style="border:none; border-top:1px solid var(--line-soft); margin:22px 0;">
+        <div class="title" style="font-weight:600; margin-bottom:6px;">Pack marketing</div>
+        <div class="sub" style="margin-bottom:12px;">Contenu A+ (les modules visuels sous votre description Amazon) et mockup 3D, dans la charte de votre couverture.</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+          <button class="btn btn-soft" onclick="App.generateAplus()" ${S.busy.aplus ? 'disabled' : ''}>${S.busy.aplus ? '<span class="spinner"></span> Génération…' : '✦ Générer les textes A+'}</button>
+          <button class="btn btn-ghost" onclick="window.open('api.php?r=kdpmeta/mockup&id=${S.project.id}', '_blank')">🧊 Mockup 3D (PNG)</button>
+          <button class="btn btn-ghost" onclick="window.open('api.php?r=kdpmeta/aplus-image&id=${S.project.id}&type=banner', '_blank')">Bannière A+ 970×600</button>
+          ${[1,2,3].map(i => `<button class="btn btn-ghost" onclick="window.open('api.php?r=kdpmeta/aplus-image&id=${S.project.id}&type=sq${i}', '_blank')">Pavé ${i} · 300×300</button>`).join('')}
+        </div>
+        ${meta.aplus ? `<div class="sub" style="background:#FBF8F0; border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+          <strong>${esc(meta.aplus.headline || '')}</strong><br>${esc(meta.aplus.subheadline || '')}<br>
+          ${(meta.aplus.benefits || []).map(b => `• <strong>${esc(b.title)}</strong> — ${esc(b.text)}`).join('<br>')}
+          ${meta.aplus.about ? '<br><em>' + esc(meta.aplus.about) + '</em>' : ''}
+        </div>` : ''}
+
+        <div class="title" style="font-weight:600; margin-bottom:6px;">Classement de vos mots-clés</div>
+        <div class="sub" style="margin-bottom:10px;">Position de votre ASIN dans la recherche Amazon pour chacun de vos 7 mots-clés (via vos crédits Canopy — résultats en cache 7 jours, « forcer » = 1 crédit par mot-clé).</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+          <button class="btn btn-soft" onclick="App.checkKeywordRanks(false)" ${S.busy.ranks ? 'disabled' : ''}>${S.busy.ranks ? '<span class="spinner"></span> Analyse…' : '🔎 Vérifier (cache)'}</button>
+          <button class="btn btn-ghost" onclick="App.checkKeywordRanks(true)" ${S.busy.ranks ? 'disabled' : ''}>↻ Forcer un relevé frais</button>
+        </div>
+        ${(S.keywordRanks || []).length ? `<div style="margin-bottom:14px;">${S.keywordRanks.map(r => `
+          <div class="token-row"><span>${esc(r.keyword)}</span>
+          <span class="mono" style="color:${r.position ? (r.position <= 10 ? 'var(--green)' : 'var(--ink)') : 'var(--faint)'};">${r.position ? '#' + r.position : 'absent du top ' + r.scanned}</span></div>`).join('')}</div>` : ''}
 
         <hr style="border:none; border-top:1px solid var(--line-soft); margin:22px 0;">
         <div class="title" style="font-weight:600; margin-bottom:6px;">Remplissage automatique du formulaire KDP</div>
@@ -2391,7 +2433,8 @@
         keywords: Array.from({ length: 7 }, (_, i) => document.getElementById('kdp-kw' + i).value),
         categories: document.getElementById('kdp-cats').value.split('\n').map(s => s.trim()).filter(Boolean),
         price: document.getElementById('kdp-price').value,
-        isbn: document.getElementById('kdp-isbn').value
+        isbn: document.getElementById('kdp-isbn').value,
+        asin: (document.getElementById('kdp-asin') || { value: '' }).value
       };
       setBusy('kdpsave', true);
       try {
@@ -2403,6 +2446,75 @@
       S.busy.kdpsave = false;
       S.modal = publishModalView(S.kdpMeta, S.tokens);
       render();
+    },
+
+    async generateAplus() {
+      setBusy('aplus', true);
+      try {
+        const data = await Api.post('kdpmeta/aplus', { id: S.project.id });
+        if (S.kdpMeta) S.kdpMeta.aplus = data.aplus;
+        toast('Textes A+ générés — téléchargez la bannière et les pavés.');
+      } catch (e) { toast(e.message, true); }
+      S.busy.aplus = false;
+      S.modal = publishModalView(S.kdpMeta, S.tokens);
+      render();
+    },
+
+    async checkKeywordRanks(force) {
+      setBusy('ranks', true);
+      try {
+        const data = await Api.post('kdpmeta/keyword-ranks', { id: S.project.id, force: force ? 1 : 0 });
+        S.keywordRanks = data.ranks;
+        if (S.app.canopy) S.app.canopy = data.canopy;
+      } catch (e) { toast(e.message, true); }
+      S.busy.ranks = false;
+      S.modal = publishModalView(S.kdpMeta, S.tokens);
+      render();
+    },
+
+    async translateProject(projectId) {
+      const lang = prompt('Langue de traduction ? (en = anglais, de = allemand, es = espagnol, it = italien, pt = portugais, nl = néerlandais)', 'en');
+      if (!lang) return;
+      try {
+        const data = await Api.post('projects/translate', { id: projectId, lang: lang.trim().toLowerCase() });
+        S.projects = data.projects;
+        render();
+        toast('Projet de traduction créé — ouvrez-le : l\'étape 05 traduit section par section (cron compatible).');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async proofreadBook() {
+      if (S.busy.proofread) return;
+      const chapters = (S.bundle.chapters || []).map(c => c.num);
+      if (!chapters.length) { toast('Aucun chapitre à relire.', true); return; }
+      if (!confirm('Relire tout le livre (orthographe, répétitions, transitions) ?\nUn appel IA par chapitre — le fond et la longueur ne changent pas.')) return;
+      S.busy.proofread = true;
+      let total = 0;
+      try {
+        for (let i = 0; i < chapters.length; i++) {
+          toast('Relecture ' + (i + 1) + '/' + chapters.length + '…');
+          const data = await Api.post('write/proofread', { id: S.project.id, chapter_num: chapters[i] });
+          total += (data.result && data.result.corrected) || 0;
+        }
+        toast('Relecture terminée : ' + total + ' section(s) corrigée(s).');
+        if (S.reader && S.reader.num) await loadChapter(S.reader.num);
+      } catch (e) { toast(e.message + ' — relecture interrompue, relancez pour continuer.', true); }
+      S.busy.proofread = false;
+      render();
+    },
+
+    async showCronInfo() {
+      try {
+        const info = await Api.get('cron/info');
+        S.modal = notesModalView('Écriture autonome (cron)',
+          'Votre livre peut s\'écrire TOUT SEUL, ordinateur éteint — et vous recevez un e-mail à la fin.\n\n'
+          + '1. Lancez (ou laissez) la rédaction en cours à l\'étape 05.\n'
+          + '2. Dans le panneau de votre hébergeur (cPanel / o2switch / OVH…), créez une tâche cron toutes les 5 à 10 minutes vers cette URL :\n\n'
+          + info.url + '\n\n'
+          + 'Variante ligne de commande :\nphp /chemin/vers/public/cron.php ' + info.secret + '\n\n'
+          + 'À chaque passage, le cron rédige jusqu\'à 5 sections des projets « en cours d\'écriture », avec les mêmes points de contrôle que le navigateur. Gardez cette URL secrète.');
+        render();
+      } catch (e) { toast(e.message, true); }
     },
 
     async createToken() {

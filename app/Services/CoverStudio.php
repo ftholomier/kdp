@@ -550,6 +550,132 @@ final class CoverStudio
         return $wrap;
     }
 
+    /**
+     * MOCKUP 3D marketing : le livre debout, légèrement tourné (cisaillement
+     * affine : face + tranche + ombre portée) — PNG 1200×1200 prêt pour les
+     * réseaux et le contenu A+.
+     */
+    public static function mockup3d(array $frontEls, array $palette, ?string $illustrationPath): string
+    {
+        $W = 1200;
+        $H = 1200;
+        $out = imagecreatetruecolor($W, $H);
+        imagefill($out, 0, 0, imagecolorallocate($out, 244, 239, 228));
+
+        $bh = 760;
+        $bw = (int) round($bh * self::W / self::H);
+        $spineW = 56;
+        $shearSpine = 0.30;   // la tranche « part » vers l'arrière
+        $shearFront = 0.045;  // la face se redresse légèrement
+
+        $front = self::renderElements($frontEls, $illustrationPath);
+        $frontScaled = imagescale($front, $bw, $bh, IMG_BICUBIC);
+        imagedestroy($front);
+
+        // Tranche : couleur du fond de la 1ère, assombrie (lumière de côté)
+        [$sr, $sg, $sb] = array_map('hexdec', str_split(ltrim(self::spineHex($frontEls, $palette), '#'), 2));
+        $spine = imagecreatetruecolor($spineW, $bh);
+        imagefill($spine, 0, 0, imagecolorallocate($spine, (int) ($sr * 0.60), (int) ($sg * 0.60), (int) ($sb * 0.60)));
+
+        $x0 = (int) (($W - $bw - $spineW) / 2);
+        $y0 = (int) (($H - $bh) / 2) - 30;
+
+        // Ombre portée douce
+        $shadow = imagecreatetruecolor($W, $H);
+        $key = imagecolorallocate($shadow, 255, 0, 255);
+        imagefill($shadow, 0, 0, $key);
+        imagecolortransparent($shadow, $key);
+        imagefilledellipse($shadow, $x0 + (int) (($bw + $spineW) / 2) + 16, $y0 + $bh + 44, $bw + 150, 84, imagecolorallocate($shadow, 203, 195, 178));
+        imagecopymerge($out, $shadow, 0, 0, 0, 0, $W, $H, 65);
+        imagedestroy($shadow);
+
+        // Cisaillement vertical manuel, colonne par colonne (fiable en GD) :
+        // tranche inclinée vers le bas, face légèrement redressée.
+        for ($x = 0; $x < $spineW; $x++) {
+            imagecopy($out, $spine, $x0 + $x, $y0 + (int) round($x * $shearSpine), $x, 0, 1, $bh);
+        }
+        $frontY = $y0 + (int) round($spineW * $shearSpine);
+        for ($x = 0; $x < $bw; $x++) {
+            imagecopy($out, $frontScaled, $x0 + $spineW + $x, $frontY - (int) round($x * $shearFront), $x, 0, 1, $bh);
+        }
+        // Épaisseur des pages : fin liseré clair le long du bord droit
+        $paper = imagecolorallocate($out, 250, 247, 240);
+        for ($i = 1; $i <= 5; $i++) {
+            imageline(
+                $out,
+                $x0 + $spineW + $bw + $i - 1, $frontY - (int) round($bw * $shearFront) + 4 + $i,
+                $x0 + $spineW + $bw + $i - 1, $frontY - (int) round($bw * $shearFront) + $bh - 2 + $i,
+                $paper
+            );
+        }
+        imagedestroy($spine);
+        imagedestroy($frontScaled);
+
+        ob_start();
+        imagepng($out, null, 6);
+        imagedestroy($out);
+        return (string) ob_get_clean();
+    }
+
+    /**
+     * Visuels A+ Amazon aux dimensions standard, dans la charte de la
+     * couverture : bannière 970×600 ou pavé bénéfice 300×300.
+     */
+    public static function aplusImage(array $palette, array $texts, string $type, array $aplus): string
+    {
+        $c1 = (string) ($palette['c1'] ?? '#1B2A4A');
+        $c2 = (string) ($palette['c2'] ?? '#C4571F');
+        $c3 = (string) ($palette['c3'] ?? '#F4EFE4');
+        $serif = self::fontFile('instrument-serif');
+        $mono = self::fontFile('plex-mono');
+
+        if ($type === 'banner') {
+            $W = 970;
+            $H = 600;
+            $im = imagecreatetruecolor($W, $H);
+            imagefill($im, 0, 0, self::alloc($im, $c1));
+            imagefilledrectangle($im, 0, $H - 14, $W, $H, self::alloc($im, $c2));
+            self::drawMotif($im, 'blob', $W * 0.84, $H * 0.26, 90, self::alloc($im, $c2), self::alloc($im, $c3));
+            $headline = (string) ($aplus['headline'] ?? ($texts['title'] ?? ''));
+            $sub = (string) ($aplus['subheadline'] ?? ($texts['tagline'] ?? ''));
+            $y = 210;
+            foreach (self::wrapPath($serif, $headline, 52, $W - 200) as $line) {
+                imagettftext($im, 52, 0, 100, $y, self::alloc($im, $c3), $serif, $line);
+                $y += 68;
+            }
+            if ($sub !== '') {
+                $y += 12;
+                foreach (self::wrapPath($mono, mb_strtoupper($sub), 17, $W - 220) as $line) {
+                    imagettftext($im, 17, 0, 100, $y, self::alloc($im, $c2), $mono, $line);
+                    $y += 30;
+                }
+            }
+        } else {
+            // Pavé bénéfice 300×300 (sq1 / sq2 / sq3)
+            $index = max(1, min(3, (int) substr($type, 2)));
+            $benefit = (array) (($aplus['benefits'] ?? [])[$index - 1] ?? []);
+            $bgs = [$c2, $c1, $c3];
+            $fgs = [$c3, $c3, $c1];
+            $motifs = ['etoile', 'soleil', 'vagues'];
+            $W = 300;
+            $H = 300;
+            $im = imagecreatetruecolor($W, $H);
+            imagefill($im, 0, 0, self::alloc($im, $bgs[$index - 1]));
+            self::drawMotif($im, $motifs[($index - 1) % count($motifs)], $W / 2, 96, 52, self::alloc($im, $fgs[$index - 1]), self::alloc($im, $bgs[$index - 1]));
+            $label = (string) ($benefit['title'] ?? ('Bénéfice ' . $index));
+            $y = 196;
+            foreach (array_slice(self::wrapPath($serif, $label, 21, $W - 50), 0, 3) as $line) {
+                $lw = self::widthPath($serif, $line, 21);
+                imagettftext($im, 21, 0, (int) (($W - $lw) / 2), $y, self::alloc($im, $fgs[$index - 1]), $serif, $line);
+                $y += 30;
+            }
+        }
+        ob_start();
+        imagepng($im, null, 6);
+        imagedestroy($im);
+        return (string) ob_get_clean();
+    }
+
     // ── Sorties ────────────────────────────────────────────────────────────
 
     public static function thumbnailFromElements(array $els, ?string $illustrationPath): string

@@ -46,6 +46,7 @@ final class PdfBook
         'sectionnum' => ['name' => 'Têtes de section composées',               'desc' => 'Pavés numérotés, gros titres, filets'],
         'figwide'    => ['name' => 'Photos pleine largeur',                    'desc' => 'Décochez pour des visuels plus discrets'],
         'deco'       => ['name' => 'Ornements & décalages',                    'desc' => 'Barres décoratives qui débordent des blocs'],
+        'endpages'   => ['name' => 'Pages de fin qui vendent',                 'desc' => 'Votre avis compte · Du même auteur · À propos (tous thèmes)'],
     ];
 
     /** Options effectives d'un projet (défauts + choix enregistrés). */
@@ -408,6 +409,8 @@ final class PdfComposer
                         $type = $block['t'] ?? 'p';
                         if ($type === 'call') {
                             $y = $this->callout($y, (string) $block['kind'], (string) $block['text']);
+                        } elseif ($type === 'table') {
+                            $y = $this->table($y, (array) $block['head'], (array) $block['rows']);
                         } elseif ($type === 'h') {
                             $y = $this->subHead($y, (string) $block['text']);
                         } elseif ($type === 'list') {
@@ -433,6 +436,89 @@ final class PdfComposer
             if ($premium) {
                 $y = $this->endRegion($y);
             }
+        }
+        $this->composeEndPages();
+    }
+
+    /**
+     * PAGES DE FIN qui vendent : « Votre avis compte » (le levier n° 1 de
+     * visibilité Amazon), « Du même auteur » (cross-sell entre vos livres)
+     * et « À propos de l'auteur » — composées dans l'esprit du thème.
+     */
+    private function composeEndPages(): void
+    {
+        if (!$this->opt('endpages')) {
+            return;
+        }
+        $ornament = function (float $y): void {
+            if ($this->opener === 'premium2') {
+                $this->pdf->roundRectRgb(($this->w - 40) / 2, $y, 40, 5, 2.5, $this->accent);
+            } elseif ($this->opener === 'centered') {
+                $this->pdf->rectRgb(($this->w - 46) / 2, $y, 46, 0.7, $this->ink);
+            } else {
+                $this->pdf->rectRgb(($this->w - 36) / 2, $y, 36, 2.2, $this->accent);
+            }
+        };
+        $page = function (string $kicker, string $title, array $paragraphs, array $listing = []) use ($ornament): void {
+            if ($this->pageNum % 2 === 1) {
+                $this->newPage('blank');
+            }
+            $this->newPage('opener');
+            $this->runningRecto = $title;
+            $this->drawFolio();
+            $y = $this->top + 64;
+            $this->centerText($y, $this->labelFont(), 8, mb_strtoupper($kicker), $this->accentDark(), 2.6);
+            $y += 20;
+            $ornament($y);
+            $y += 34;
+            foreach ($this->wrapText($title, $this->titleFont, 20, $this->textWidth() * 0.8) as $line) {
+                $this->centerText($y, $this->titleFont, 20, $line);
+                $y += 26;
+            }
+            $y += 16;
+            $width = $this->textWidth() * 0.84;
+            $left = $this->marginLeft() + ($this->textWidth() - $width) / 2;
+            foreach ($paragraphs as $paragraph) {
+                foreach ($this->justify($paragraph, 'body', 10.4, $width, 0, 0) as $line) {
+                    if ($y > $this->h - $this->bottom - 10) {
+                        break 2;
+                    }
+                    $this->pdf->text($left + $line['x'], $y, 'body', 10.4, $line['text'], $line['tw']);
+                    $y += 15.2;
+                }
+                $y += 7;
+            }
+            foreach ($listing as $item) {
+                if ($y > $this->h - $this->bottom - 30) {
+                    break;
+                }
+                $y += 10;
+                $this->centerText($y, $this->titleFont, 12.5, $this->fitOneLine((string) $item['title'], $this->titleFont, 12.5, $width));
+                $y += 15;
+                if (!empty($item['subtitle'])) {
+                    $this->centerText($y, 'italic', 9.5, $this->fitOneLine((string) $item['subtitle'], 'italic', 9.5, $width), $this->gray);
+                    $y += 14;
+                }
+            }
+        };
+
+        $page('Un dernier mot', 'Votre avis compte', [
+            'Vous voici à la fin de ce livre — merci de l\'avoir lu jusqu\'ici. Si les pages qui précèdent vous ont apporté '
+            . 'des repères, des idées ou l\'envie de passer à l\'action, vous pouvez rendre un immense service à son auteur '
+            . 'indépendant : laisser un avis sur Amazon.',
+            'Quelques lignes suffisent. Les avis sont le principal signal qui permet à un livre autoédité d\'être découvert '
+            . 'par d\'autres lecteurs : chacun compte réellement.',
+            'Rendez-vous sur la page Amazon du livre (rubrique « Donner un avis ») — et merci d\'avance.',
+        ]);
+
+        if (!empty($this->book['other_books'])) {
+            $page('Pour aller plus loin', 'Du même auteur', [
+                'Si ce livre vous a plu, d\'autres titres du même auteur pourraient vous accompagner :',
+            ], $this->book['other_books']);
+        }
+
+        if (!empty($this->book['bio'])) {
+            $page('L\'auteur', 'À propos de ' . $this->book['author'], [$this->book['bio']]);
         }
     }
 
@@ -527,6 +613,8 @@ final class PdfComposer
                         continue;
                     }
                     $y = $this->gridSnap($this->callout($y, (string) $block['kind'], (string) $block['text']));
+                } elseif ($type === 'table') {
+                    $y = $this->gridSnap($this->table($y, (array) $block['head'], (array) $block['rows']));
                 } elseif ($type === 'h') {
                     $y = $this->gridSnap($this->subHead($y, (string) $block['text']));
                 } elseif ($type === 'list') {
@@ -583,6 +671,8 @@ final class PdfComposer
                     $n += count($this->wrapText(trim($paragraph), 'body', 8.8, $colW - 2 * $pad));
                 }
                 $h += 38 + $n * 12.6 + $pad * 0.7 + 15;
+            } elseif ($type === 'table') {
+                $h += (count((array) ($block['rows'] ?? [])) + 1) * 22.0 + 20;
             } elseif ($type === 'h') {
                 $h += 29.0;
             } elseif ($type === 'list') {
@@ -979,6 +1069,61 @@ final class PdfComposer
             $ty += $lineH;
         }
         return $y + $boxH + 18;
+    }
+
+    /**
+     * TABLEAU éditorial (bloc :::tableau) : en-têtes sur fond teinté, filets
+     * fins, cellules à colonnes égales — coupé proprement entre les pages.
+     */
+    private function table(float $y, array $head, array $rows): float
+    {
+        $left = $this->colX();
+        $width = $this->colWidth();
+        $cols = max(2, count($head));
+        $cellW = $width / $cols;
+        $pad = 5.0;
+        $size = 8.2;
+        $lineH = 11.0;
+        $sans = in_array($this->opener, ['number', 'band'], true) ? 'sans' : ($this->isPremium() ? $this->sansFont() : 'label');
+
+        $rowHeight = function (array $cells, string $font, float $fs) use ($cols, $cellW, $pad, $lineH): array {
+            $wrapped = [];
+            $lines = 1;
+            for ($i = 0; $i < $cols; $i++) {
+                $wrapped[$i] = $this->wrapText(trim((string) ($cells[$i] ?? '')), $font, $fs, $cellW - 2 * $pad);
+                $lines = max($lines, count($wrapped[$i]));
+            }
+            return [$wrapped, $lines * $lineH + 2 * $pad];
+        };
+        $drawRow = function (float $y, array $wrapped, float $h, ?array $bg, string $font, float $fs, ?array $fg) use ($cols, $cellW, $pad, $lineH, $left, $width): float {
+            if ($bg !== null) {
+                $this->pdf->rectRgb($left, $y, $width, $h, $bg);
+            }
+            foreach ($wrapped as $i => $lines) {
+                $ty = $y + $pad + $fs * 0.85;
+                foreach ($lines as $line) {
+                    $this->pdf->text($left + $i * $cellW + $pad, $ty, $font, $fs, $line, 0, 0, $fg);
+                    $ty += $lineH;
+                }
+            }
+            $this->pdf->rectRgb($left, $y + $h, $width, 0.5, [210, 202, 186]);
+            return $y + $h;
+        };
+
+        [$headWrapped, $headH] = $rowHeight($head, $sans, 7.6);
+        $y = $this->ensureRoom($y, $headH + 3 * $lineH + 24);
+        $y += 8;
+        $y = $drawRow($y, $headWrapped, $headH, $this->accentSoft, $sans, 7.6, $this->accentDark());
+        foreach ($rows as $cells) {
+            [$wrapped, $h] = $rowHeight((array) $cells, 'body', $size);
+            if ($y + $h > $this->colBottom()) {
+                $y = $this->breakColumn();
+                $y = $drawRow($y + 4, $headWrapped, $headH, $this->accentSoft, $sans, 7.6, $this->accentDark());
+            }
+            $y = $drawRow($y, $wrapped, $h, null, 'body', $size, null);
+        }
+        $this->regionMaxY = max($this->regionMaxY, $y + 12);
+        return $y + 12;
     }
 
     /** Sous-titre intra-section (bloc « h » : ancien ### markdown). */

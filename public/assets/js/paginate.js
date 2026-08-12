@@ -112,6 +112,11 @@
               `<div class="prose"><ul class="book-list">${block.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`, true);
             return;
           }
+          if (block.t === 'table') {
+            content = appendBlock(content,
+              `<div class="prose"><table class="book-table"><thead><tr>${block.head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${block.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`, true);
+            return;
+          }
           if (block.t === 'h') {
             content = appendBlock(content, `<div class="prose"><h4 class="book-subhead">${esc(block.text)}</h4></div>`, true);
             return;

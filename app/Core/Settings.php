@@ -18,6 +18,8 @@ final class Settings
         'gemini.model_pro',
         'canopy.api_key',
         'canopy.domain',
+        'cron.secret',
+        'notify.email',
     ];
 
     private static ?array $cache = null;

@@ -749,6 +749,99 @@ final class Router
                 $project = self::project((int) Http::in('id'), $userId);
                 Http::ok(['meta' => Kdp::save((int) $project['id'], Http::input())]);
 
+            case 'kdpmeta/aplus':
+                // Textes du contenu A+ Amazon (modules sous la description)
+                Http::requirePost();
+                @set_time_limit(90);
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['aplus' => Kdp::generateAplus($project, self::selectedConceptOrNull($project))]);
+
+            case 'kdpmeta/aplus-image':
+                // Visuel A+ aux dimensions standard, dans la charte de la couverture
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $meta = Kdp::meta((int) $project['id']);
+                $png = CoverStudio::aplusImage($cover['palette'], $cover['texts'], (string) Http::in('type', 'banner'), (array) ($meta['aplus'] ?? []));
+                header('Content-Type: image/png');
+                header('Content-Disposition: attachment; filename="aplus-' . (string) Http::in('type', 'banner') . '-' . (int) $project['id'] . '.png"');
+                header('Content-Length: ' . strlen($png));
+                echo $png;
+                exit;
+
+            case 'kdpmeta/mockup':
+                // Mockup 3D marketing du livre (face + tranche + ombre)
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                $illus = CoverStudio::illusPath((int) $project['id']);
+                $png = CoverStudio::mockup3d(
+                    Covers::frontElements($cover, is_file($illus)),
+                    $cover['palette'],
+                    is_file($illus) ? $illus : null
+                );
+                header('Content-Type: image/png');
+                header('Content-Disposition: attachment; filename="mockup-3d-' . (int) $project['id'] . '.png"');
+                header('Content-Length: ' . strlen($png));
+                echo $png;
+                exit;
+
+            case 'kdpmeta/keyword-ranks':
+                // Position de VOTRE ASIN dans la recherche Amazon pour chaque mot-clé
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $meta = Kdp::meta((int) $project['id']);
+                $asin = strtoupper(trim((string) $meta['asin']));
+                if ($asin === '') {
+                    Http::error('Renseignez d\'abord l\'ASIN de votre livre publié (modal Publier).');
+                }
+                if (!$meta['keywords']) {
+                    Http::error('Aucun mot-clé enregistré — générez ou saisissez vos 7 mots-clés.');
+                }
+                $force = (bool) Http::in('force');
+                $ranks = [];
+                foreach ($meta['keywords'] as $keyword) {
+                    $products = \App\Services\Canopy::search((string) $keyword, 1, $force);
+                    $position = null;
+                    foreach ((array) ($products ?? []) as $i => $product) {
+                        if (strtoupper((string) $product['asin']) === $asin) {
+                            $position = $i + 1;
+                            break;
+                        }
+                    }
+                    $ranks[] = ['keyword' => $keyword, 'position' => $position, 'scanned' => count((array) ($products ?? []))];
+                }
+                Http::ok(['ranks' => $ranks, 'asin' => $asin, 'canopy' => \App\Services\Canopy::status()]);
+
+            case 'write/proofread':
+                // Relecture d'UN chapitre (le client enchaîne chapitre par chapitre)
+                Http::requirePost();
+                @set_time_limit(150);
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['result' => Writer::proofreadChapter($project, (int) Http::in('chapter_num'))]);
+
+            case 'projects/translate':
+                // Version étrangère d'un livre rédigé : l'étape 05 TRADUIT
+                Http::requirePost();
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $created = \App\Services\Translate::createProject($userId, $project, (string) Http::in('lang', 'en'));
+                Http::ok(['id' => $created['id'], 'projects' => Db::all(
+                    'SELECT p.*, c.title AS concept_title FROM projects p LEFT JOIN concepts c ON c.id = p.concept_id WHERE p.user_id = ? ORDER BY p.updated_at DESC', [$userId]
+                )]);
+
+            case 'cron/info':
+                // Écriture autonome : URL + secret pour la tâche cron de l'hébergeur
+                $secret = trim((string) \App\Core\Settings::get('cron.secret', ''));
+                if ($secret === '') {
+                    $secret = bin2hex(random_bytes(20));
+                    \App\Core\Settings::set('cron.secret', $secret);
+                }
+                Http::ok([
+                    'url'    => rtrim((string) Config::baseUrl(), '/') . '/cron.php?key=' . $secret,
+                    'secret' => $secret,
+                ]);
+
             case 'tokens/list':
                 Http::ok(['tokens' => Kdp::tokens($userId)]);
 

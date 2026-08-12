@@ -20,11 +20,15 @@ final class Kdp
             return [
                 'project_id' => $projectId, 'subtitle' => '', 'author_first' => '', 'author_last' => '',
                 'description_html' => '', 'keywords' => [], 'categories' => [], 'price' => null, 'isbn' => '',
+                'asin' => '', 'aplus' => null,
             ];
         }
         $meta['keywords'] = json_decode((string) $meta['keywords'], true) ?: [];
         $meta['categories'] = json_decode((string) $meta['categories'], true) ?: [];
         $meta['price'] = $meta['price'] !== null ? (float) $meta['price'] : null;
+        $meta['asin'] = (string) ($meta['asin'] ?? '');
+        $meta['aplus'] = !empty($meta['aplus_json']) ? (json_decode((string) $meta['aplus_json'], true) ?: null) : null;
+        unset($meta['aplus_json']);
         return $meta;
     }
 
@@ -42,13 +46,14 @@ final class Kdp
         $price = $input['price'] ?? null;
         $price = ($price === null || $price === '') ? null : Layout::parsePrice((string) $price);
 
+        $asin = strtoupper(mb_substr(trim((string) ($input['asin'] ?? '')), 0, 20));
         Db::run(
-            'INSERT INTO kdp_meta (project_id, subtitle, author_first, author_last, description_html, keywords, categories, price, isbn, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?)
+            'INSERT INTO kdp_meta (project_id, subtitle, author_first, author_last, description_html, keywords, categories, price, isbn, asin, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE subtitle = VALUES(subtitle), author_first = VALUES(author_first),
                author_last = VALUES(author_last), description_html = VALUES(description_html),
                keywords = VALUES(keywords), categories = VALUES(categories), price = VALUES(price),
-               isbn = VALUES(isbn), updated_at = VALUES(updated_at)',
+               isbn = VALUES(isbn), asin = VALUES(asin), updated_at = VALUES(updated_at)',
             [
                 $projectId,
                 mb_substr(trim((string) ($input['subtitle'] ?? '')), 0, 250),
@@ -59,6 +64,7 @@ final class Kdp
                 json_encode($categories, JSON_UNESCAPED_UNICODE),
                 $price,
                 mb_substr(trim((string) ($input['isbn'] ?? '')), 0, 20),
+                $asin,
                 Db::now(),
             ]
         );
@@ -135,6 +141,43 @@ final class Kdp
             'bleed'       => true,
             'generated_at'=> date('c'),
         ];
+    }
+
+    /** Contenu A+ Amazon : textes des modules générés puis mémorisés. */
+    public static function generateAplus(array $project, ?array $concept): array
+    {
+        $projectId = (int) $project['id'];
+        $meta = self::meta($projectId);
+        $cover = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
+        $texts = $cover ? (json_decode((string) $cover['texts'], true) ?: []) : [];
+        $title = (string) ($texts['title'] ?? ($concept['title'] ?? $project['title']));
+
+        $data = Gemini::json(
+            "Tu es expert du contenu A+ Amazon (les modules visuels sous la description produit). "
+            . "Prépare les TEXTES du contenu A+ d'un livre pratique français.\n"
+            . "Titre : « {$title} »\nSous-titre : « {$meta['subtitle']} »\n"
+            . "Description existante : " . strip_tags((string) $meta['description_html']) . "\n\n"
+            . 'Réponds UNIQUEMENT en JSON : {"headline":"accroche 6-10 mots","subheadline":"promesse 12-18 mots",'
+            . '"benefits":[{"title":"bénéfice 3-5 mots","text":"2 phrases concrètes"},{"title":"…","text":"…"},{"title":"…","text":"…"}],'
+            . '"about":"paragraphe « pourquoi ce livre » de 50-70 mots"}',
+            ['model' => 'fast', 'temperature' => 0.8, 'timeout' => 45, 'retries' => 1,
+             'system' => 'Tu écris des fiches produit Amazon qui convertissent, en français.']
+        );
+        $aplus = [
+            'headline'    => mb_substr(trim((string) ($data['headline'] ?? $title)), 0, 120),
+            'subheadline' => mb_substr(trim((string) ($data['subheadline'] ?? '')), 0, 200),
+            'benefits'    => array_slice(array_map(fn ($b) => [
+                'title' => mb_substr(trim((string) ($b['title'] ?? '')), 0, 60),
+                'text'  => mb_substr(trim((string) ($b['text'] ?? '')), 0, 300),
+            ], (array) ($data['benefits'] ?? [])), 0, 3),
+            'about'       => mb_substr(trim((string) ($data['about'] ?? '')), 0, 600),
+        ];
+        Db::run(
+            'INSERT INTO kdp_meta (project_id, keywords, categories, aplus_json, updated_at) VALUES (?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE aplus_json = VALUES(aplus_json), updated_at = VALUES(updated_at)',
+            [$projectId, '[]', '[]', json_encode($aplus, JSON_UNESCAPED_UNICODE), Db::now()]
+        );
+        return $aplus;
     }
 
     // ── Jetons d'API du userscript ─────────────────────────────────────────

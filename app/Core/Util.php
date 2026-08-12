@@ -129,14 +129,25 @@ final class Util
                 continue;
             }
             if ($callout === null && preg_match('/^:::\s*([a-zé]+)\s*$/u', $trimmed, $m)
-                && isset(self::CALLOUTS[$m[1]])) {
+                && (isset(self::CALLOUTS[$m[1]]) || $m[1] === 'tableau')) {
                 $flush();
                 $callout = ['kind' => $m[1], 'lines' => []];
                 continue;
             }
             if ($callout !== null && preg_match('/^:::\s*$/', $trimmed)) {
                 $content = trim(implode("\n", $callout['lines']));
-                if ($content !== '') {
+                if ($content !== '' && $callout['kind'] === 'tableau') {
+                    // Tableau : 1re ligne = en-têtes, cellules séparées par « | »
+                    $rows = array_values(array_filter(array_map(
+                        fn ($row) => array_map('trim', explode('|', $row)),
+                        array_filter(array_map('trim', explode("\n", $content)), fn ($r) => $r !== '')
+                    ), fn ($cells) => count($cells) >= 2));
+                    if (count($rows) >= 2) {
+                        $blocks[] = ['t' => 'table', 'head' => array_shift($rows), 'rows' => $rows];
+                    } elseif ($content !== '') {
+                        $blocks[] = ['t' => 'p', 'text' => str_replace("\n", ' ', $content)];
+                    }
+                } elseif ($content !== '') {
                     $blocks[] = ['t' => 'call', 'kind' => $callout['kind'], 'text' => $content];
                 }
                 $callout = null;

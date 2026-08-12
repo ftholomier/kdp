@@ -71,12 +71,19 @@ final class Writer
         if (!$section) {
             Db::run("UPDATE projects SET writing_status = 'done', step = GREATEST(step, 6), updated_at = ? WHERE id = ?", [Db::now(), $projectId]);
             Util::journal($projectId, 'ok', 'Rédaction terminée · manuscrit complet enregistré');
+            self::notifyDone($project);
             return self::status(self::freshProject($projectId));
         }
 
         $checkpoint = 'ch' . $section['chapter_num'] . ' §' . $section['num'];
         $label = self::labelFor($projectId, (string) ($section['chapter_role'] ?? 'chapter'), (int) $section['chapter_num']);
-        Db::run("UPDATE sections SET status = 'writing' WHERE id = ?", [$section['id']]);
+        // VERROU : revendique la section — si un autre processus (cron et
+        // navigateur en parallèle) l'a déjà prise, on passe son tour.
+        $claim = Db::pdo()->prepare("UPDATE sections SET status = 'writing' WHERE id = ? AND status = 'wait'");
+        $claim->execute([(int) $section['id']]);
+        if ($claim->rowCount() === 0 && $section['status'] !== 'writing') {
+            return self::status(self::freshProject($projectId));
+        }
         Db::run("UPDATE chapters SET status = 'writing' WHERE id = ? AND status = 'wait'", [$section['chap_id']]);
         Util::journal($projectId, 'ok', $label . ' · section ' . $section['num'] . ' — rédaction');
 
@@ -274,9 +281,119 @@ final class Writer
         return $text;
     }
 
+    /** E-mail « manuscrit terminé » (utile surtout en écriture autonome cron). */
+    private static function notifyDone(array $project): void
+    {
+        $user = Db::one('SELECT email, display_name FROM users WHERE id = ?', [(int) $project['user_id']]);
+        $to = trim((string) \App\Core\Settings::get('notify.email', (string) ($user['email'] ?? '')));
+        if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+        $title = (string) $project['title'];
+        @mail(
+            $to,
+            '=?UTF-8?B?' . base64_encode('📖 Manuscrit terminé — ' . mb_substr($title, 0, 60)) . '?=',
+            "Bonne nouvelle : la rédaction de « {$title} » est terminée.\n\n"
+            . "Prochaines étapes : relisez les chapitres (étape 06), puis exportez le PDF intérieur, l'EPUB et la couverture (étape 07).\n\n— "
+            . (string) \App\Core\Config::get('app.name', 'Tirage'),
+            "Content-Type: text/plain; charset=UTF-8\r\n"
+        );
+    }
+
+    /**
+     * RELECTURE d'un chapitre entier (orthographe, répétitions, transitions) :
+     * un appel IA par chapitre, sections renvoyées corrigées une à une.
+     */
+    public static function proofreadChapter(array $project, int $chapterNum): array
+    {
+        $chapter = Db::one('SELECT * FROM chapters WHERE project_id = ? AND num = ?', [(int) $project['id'], $chapterNum]);
+        if (!$chapter) {
+            throw new \RuntimeException('Chapitre introuvable.');
+        }
+        $sections = Db::all("SELECT id, num, title, content FROM sections WHERE chapter_id = ? AND status = 'done' AND content IS NOT NULL ORDER BY num", [(int) $chapter['id']]);
+        if (!$sections) {
+            return ['corrected' => 0, 'label' => $chapter['title']];
+        }
+        $blob = '';
+        foreach ($sections as $section) {
+            $blob .= "<<<SECTION {$section['num']}>>>\n" . trim((string) $section['content']) . "\n<<<FIN>>>\n\n";
+        }
+        $prompt = "RELECTURE PROFESSIONNELLE du chapitre « {$chapter['title']} » d'un livre pratique français.\n"
+            . "Corrige UNIQUEMENT : orthographe, grammaire, ponctuation, répétitions maladroites, transitions abruptes. "
+            . "Ne change NI le fond, NI la structure, NI la longueur, NI la syntaxe des encadrés (:::type … :::) et tableaux.\n\n"
+            . $blob
+            . "Réponds UNIQUEMENT en JSON : {\"sections\":[{\"num\":1,\"content\":\"texte corrigé\"}, …]} — une entrée par section, texte complet.";
+        $data = Gemini::json($prompt, [
+            'model' => 'pro', 'temperature' => 0.2, 'timeout' => 90, 'retries' => 0,
+            'system' => 'Tu es correcteur professionnel francophone. Tu renvoies du JSON strict.',
+        ]);
+        $byNum = [];
+        foreach ($sections as $section) {
+            $byNum[(int) $section['num']] = $section;
+        }
+        $corrected = 0;
+        foreach ((array) ($data['sections'] ?? []) as $fix) {
+            $num = (int) ($fix['num'] ?? 0);
+            $content = trim((string) ($fix['content'] ?? ''));
+            if (!isset($byNum[$num]) || Util::wordCount($content) < 40) {
+                continue;
+            }
+            // Garde-fou : une correction ne réduit jamais le texte de plus de 25 %
+            $before = Util::wordCount((string) $byNum[$num]['content']);
+            if ($before > 0 && Util::wordCount($content) < $before * 0.75) {
+                continue;
+            }
+            Db::run('UPDATE sections SET content = ?, words = ?, updated_at = ? WHERE id = ?',
+                [$content, Util::wordCount($content), Db::now(), (int) $byNum[$num]['id']]);
+            $corrected++;
+        }
+        Util::journal((int) $project['id'], 'ok', 'Relecture « ' . $chapter['title'] . ' » : ' . $corrected . ' section(s) corrigée(s)');
+        return ['corrected' => $corrected, 'label' => $chapter['title']];
+    }
+
     // ── Interne ────────────────────────────────────────────────────────────
 
     private static function writeSection(array $project, ?array $concept, array $section): string
+    {
+        // MODE TRADUCTION : le projet est la version étrangère d'un livre déjà
+        // écrit — chaque section est TRADUITE depuis la source (mêmes numéros),
+        // avec les mêmes points de contrôle et la même reprise sur erreur.
+        if (!empty($project['translate_from'])) {
+            return self::translateSection($project, $section);
+        }
+        return self::writeSectionOriginal($project, $concept, $section);
+    }
+
+    /** Traduit la section homologue du projet source (même chapitre, même numéro). */
+    private static function translateSection(array $project, array $section): string
+    {
+        $lang = (string) ($project['translate_lang'] ?? 'anglais');
+        $source = Db::one(
+            "SELECT s.content FROM sections s JOIN chapters c ON c.id = s.chapter_id
+             WHERE c.project_id = ? AND c.num = ? AND s.num = ? AND s.content IS NOT NULL",
+            [(int) $project['translate_from'], (int) $section['chapter_num'], (int) $section['num']]
+        );
+        if (!$source || trim((string) $source['content']) === '') {
+            throw new \RuntimeException('Section source introuvable — le livre d\'origine doit être entièrement rédigé.');
+        }
+        $prompt = "TRADUIS en {$lang} la section suivante d'un livre pratique, pour des lecteurs natifs.\n"
+            . "Règles :\n- traduction naturelle et idiomatique (pas littérale), même ton, même structure ;\n"
+            . "- adapte les expressions, unités et références culturelles au lectorat {$lang} ;\n"
+            . "- conserve EXACTEMENT la syntaxe des encadrés (:::type … :::) et des tableaux (:::tableau, lignes « a | b ») en traduisant leur contenu ;\n"
+            . "- listes avec « – » conservées.\n\n"
+            . "TEXTE SOURCE (français) :\n---\n" . trim((string) $source['content']) . "\n---\n\n"
+            . "Réponds UNIQUEMENT avec la traduction, sans commentaire.";
+        $text = trim(Gemini::text($prompt, [
+            'model' => 'pro', 'temperature' => 0.5, 'timeout' => 120, 'retries' => 1,
+            'system' => "Tu es traducteur éditorial professionnel vers le {$lang}.",
+        ]));
+        if (Util::wordCount($text) < 60) {
+            throw new \RuntimeException('Traduction trop courte — nouvel essai au prochain passage.');
+        }
+        return $text;
+    }
+
+    private static function writeSectionOriginal(array $project, ?array $concept, array $section): string
     {
         $projectId = (int) $project['id'];
         $sectionsPer = max(1, (int) Config::get('writing.sections_per_chapter', 3));
@@ -311,7 +428,9 @@ final class Writer
             . "  :::retenir (l'essentiel en 2-3 phrases) · :::chiffre (un chiffre marquant et son explication) · "
             . ":::conseil (astuce immédiatement actionnable) · :::exemple (mini-cas concret) · "
             . ":::faq (une question que se pose le lecteur, suivie de la réponse) · :::attention (piège à éviter)\n"
-            . "  SYNTAXE EXACTE, seule mise en forme autorisée :\n  :::conseil\n  Texte de l'encadré…\n  :::\n";
+            . "  SYNTAXE EXACTE, seule mise en forme autorisée :\n  :::conseil\n  Texte de l'encadré…\n  :::\n"
+            . "- quand un comparatif, des dosages ou un planning s'y prêtent, utilise un TABLEAU (max 1 par section, 2-4 colonnes) :\n"
+            . "  :::tableau\n  En-tête A | En-tête B | En-tête C\n  valeur | valeur | valeur\n  :::\n";
 
         $roleBrief = match ($role) {
             'intro' => "Tu rédiges l'INTRODUCTION du livre. Objectifs : accrocher dès la première phrase par une "

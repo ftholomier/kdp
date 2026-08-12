@@ -107,6 +107,14 @@ final class Epub
                             $html .= '<p>' . $e(trim($paragraph)) . '</p>';
                         }
                         $html .= '</aside>';
+                    } elseif ($type === 'table') {
+                        $html .= '<table><thead><tr>'
+                            . implode('', array_map(fn ($c) => '<th>' . $e((string) $c) . '</th>', (array) $block['head']))
+                            . '</tr></thead><tbody>';
+                        foreach ((array) $block['rows'] as $row) {
+                            $html .= '<tr>' . implode('', array_map(fn ($c) => '<td>' . $e((string) $c) . '</td>', (array) $row)) . '</tr>';
+                        }
+                        $html .= '</tbody></table>';
                     } elseif ($type === 'h') {
                         $html .= '<h3>' . $e((string) $block['text']) . '</h3>';
                     } elseif ($type === 'list') {
@@ -133,6 +141,32 @@ final class Epub
             $manifest[] = '<item id="' . $id . '" href="' . $id . '.xhtml" media-type="application/xhtml+xml"/>';
             $spine[] = '<itemref idref="' . $id . '"/>';
             $navEntries[] = '<li><a href="' . $id . '.xhtml">' . $e($chapter['title']) . '</a></li>';
+        }
+
+        // ── Pages de fin qui vendent ──
+        $endPages = [];
+        $endPages[] = ['avis', 'Votre avis compte',
+            '<p>Vous voici à la fin de ce livre — merci de l\'avoir lu jusqu\'ici. Si les pages qui précèdent vous ont apporté des repères, des idées ou l\'envie de passer à l\'action, vous pouvez rendre un immense service à son auteur indépendant : <b>laisser un avis sur Amazon</b>.</p>'
+            . '<p>Quelques lignes suffisent. Les avis sont le principal signal qui permet à un livre autoédité d\'être découvert par d\'autres lecteurs : chacun compte réellement.</p>'
+            . '<p>Rendez-vous sur la page Amazon du livre (rubrique « Donner un avis ») — et merci d\'avance.</p>'];
+        if (!empty($book['other_books'])) {
+            $listing = '';
+            foreach ($book['other_books'] as $other) {
+                $listing .= '<p class="autre-livre"><b>' . $e((string) $other['title']) . '</b>'
+                    . (!empty($other['subtitle']) ? '<br/><i>' . $e((string) $other['subtitle']) . '</i>' : '') . '</p>';
+            }
+            $endPages[] = ['autres', 'Du même auteur',
+                '<p>Si ce livre vous a plu, d\'autres titres du même auteur pourraient vous accompagner :</p>' . $listing];
+        }
+        if (!empty($book['bio'])) {
+            $endPages[] = ['auteur', 'À propos de ' . $book['author'], '<p>' . $e((string) $book['bio']) . '</p>'];
+        }
+        foreach ($endPages as [$slug, $title, $content]) {
+            $zip->addFromString('OEBPS/fin-' . $slug . '.xhtml', self::page($title,
+                '<div class="finpage"><h1 class="chap">' . $e($title) . '</h1>' . $content . '</div>'));
+            $manifest[] = '<item id="fin-' . $slug . '" href="fin-' . $slug . '.xhtml" media-type="application/xhtml+xml"/>';
+            $spine[] = '<itemref idref="fin-' . $slug . '"/>';
+            $navEntries[] = '<li><a href="fin-' . $slug . '.xhtml">' . $e($title) . '</a></li>';
         }
 
         // ── Sommaire navigable ──
@@ -192,6 +226,12 @@ li { margin-bottom: 0.35em; }
 aside.callout { border: 1px solid #d8d2c4; border-left: 4px solid #8a5a2a; background: #f7f3e9;
   padding: 0.7em 0.9em; margin: 1em 0; page-break-inside: avoid; }
 aside.callout .co-label { font-size: 0.72em; letter-spacing: 0.16em; color: #8a5a2a; margin-bottom: 0.4em; }
+table { border-collapse: collapse; margin: 1em 0; width: 100%; font-size: 0.88em; }
+th { text-align: left; background: #f0ead9; border-bottom: 2px solid #8a5a2a; padding: 0.4em 0.5em; }
+td { border-bottom: 1px solid #ddd6c6; padding: 0.4em 0.5em; }
+.finpage { text-align: center; margin-top: 12%; }
+.finpage p { text-align: center; }
+.autre-livre { margin-top: 1em; }
 figure { margin: 1.2em 0; text-align: center; page-break-inside: avoid; }
 figure img { max-width: 100%; }
 figcaption { font-size: 0.82em; font-style: italic; color: #6e685c; margin-top: 0.4em; }

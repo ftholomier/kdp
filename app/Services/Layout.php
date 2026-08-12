@@ -236,11 +236,22 @@ final class Layout
         }
         $cover = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
         $texts = $cover ? (json_decode((string) $cover['texts'], true) ?: []) : [];
+        // Pages de fin : bio de l'auteur + autres livres publiés du compte
+        $otherBooks = Db::all(
+            "SELECT COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(cv.texts, '$.title')), ''), p.title) AS title,
+                    COALESCE(JSON_UNQUOTE(JSON_EXTRACT(cv.texts, '$.subtitle')), '') AS subtitle
+             FROM projects p LEFT JOIN covers cv ON cv.project_id = p.id
+             WHERE p.user_id = ? AND p.id != ? AND p.writing_status = 'done'
+             ORDER BY p.updated_at DESC LIMIT 6",
+            [(int) $project['user_id'], $projectId]
+        );
         return [
             'title'    => $texts['title'] ?? ($concept['title'] ?? $project['title']),
             'subtitle' => $texts['subtitle'] ?? '',
             'tagline'  => $texts['tagline'] ?? ($concept['hook'] ?? ''),
             'author'   => $texts['author'] ?? ($user['display_name'] ?: 'Auteur'),
+            'bio'      => trim((string) ($texts['bio'] ?? '')),
+            'other_books' => $otherBooks,
             'chapters' => $out,
             'year'     => date('Y'),
             'callout_labels' => Util::CALLOUTS,

@@ -130,6 +130,9 @@ h2.section-title {
 }
 .callout p:last-child { margin-bottom: 0; }
 .prose h4.book-subhead { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 11.5pt; margin: 8pt 0 4pt; }
+.prose table.book-table { border-collapse: collapse; width: 100%; margin: 6pt 0 8pt; font-size: 8.6pt; }
+.prose table.book-table th { text-align: left; background: #F1EADA; border-bottom: 1.4pt solid #8A5A2A; padding: 3pt 5pt; }
+.prose table.book-table td { border-bottom: 0.5pt solid #DDD6C6; padding: 3pt 5pt; }
 .prose ul.book-list { margin: 4pt 0 6pt; padding-left: 11pt; }
 .prose ul.book-list li {
   font-family: 'Instrument Serif', serif; font-size: 11.2pt; line-height: 1.42;

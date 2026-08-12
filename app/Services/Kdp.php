@@ -130,7 +130,9 @@ final class Kdp
             'pages'       => $summary['geometry']['pages'],
             'ink'         => ($project['photo_style'] ?? 'nb') === 'couleur' ? 'color' : 'black_white',
             'paper'       => 'white',
-            'bleed'       => false,
+            // L'intérieur est exporté AVEC fond perdu (aplats bord à bord) :
+            // choisir « avec fond perdu » dans le formulaire KDP.
+            'bleed'       => true,
             'generated_at'=> date('c'),
         ];
     }

@@ -130,6 +130,76 @@ final class Router
                 Db::run('DELETE FROM projects WHERE id = ?', [(int) $project['id']]);
                 Http::ok();
 
+            case 'projects/duplicate':
+                // Nouveau livre avec la MÊME recette : format, thème, composeur,
+                // photos, ton, palette et gabarit de couverture — contenu vierge.
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $newId = Db::insert(
+                    'INSERT INTO projects (user_id, title, step, mode, idea, pages, photos, photos_per, photo_style, tone, trim_format, interior_theme, layout_options, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    [
+                        $userId,
+                        mb_substr((string) $project['title'] . ' — copie', 0, 250),
+                        1,
+                        (string) $project['mode'],
+                        '',
+                        (int) $project['pages'],
+                        (int) $project['photos'],
+                        (int) $project['photos_per'],
+                        (string) $project['photo_style'],
+                        (string) $project['tone'],
+                        (string) $project['trim_format'],
+                        (string) ($project['interior_theme'] ?? 'editorial'),
+                        $project['layout_options'] ?? null,
+                        Db::now(), Db::now(),
+                    ]
+                );
+                $coverRow = Db::one('SELECT template, palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
+                if ($coverRow) {
+                    Db::run(
+                        'INSERT INTO covers (project_id, template, palette, texts, updated_at) VALUES (?,?,?,?,?)',
+                        [$newId, (string) $coverRow['template'], (string) $coverRow['palette'], '{}', Db::now()]
+                    );
+                }
+                Util::journal($newId, 'ok', 'Projet créé par duplication de « ' . $project['title'] . ' » (réglages conservés)');
+                Http::ok(['id' => $newId, 'projects' => Db::all(
+                    'SELECT p.*, c.title AS concept_title FROM projects p LEFT JOIN concepts c ON c.id = p.concept_id WHERE p.user_id = ? ORDER BY p.updated_at DESC', [$userId]
+                )]);
+
+            case 'projects/export':
+                // Sauvegarde COMPLÈTE du projet (JSON, images en base64)
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $payload = json_encode(\App\Services\Backup::export($project), JSON_UNESCAPED_UNICODE);
+                header('Content-Type: application/json; charset=utf-8');
+                header('Content-Disposition: attachment; filename="tirage-' . Util::slug((string) $project['title']) . '-' . date('Ymd') . '.json"');
+                header('Content-Length: ' . strlen((string) $payload));
+                header('Cache-Control: no-store');
+                echo $payload;
+                exit;
+
+            case 'projects/import':
+                // Restauration d'une sauvegarde comme NOUVEAU projet
+                Http::requirePost();
+                @set_time_limit(180);
+                $file = $_FILES['file'] ?? null;
+                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                    Http::error('Fichier de sauvegarde manquant.');
+                }
+                $data = json_decode((string) file_get_contents($file['tmp_name']), true);
+                if (!is_array($data)) {
+                    Http::error('Fichier illisible : ce n\'est pas une sauvegarde Tirage.');
+                }
+                $restored = \App\Services\Backup::import($userId, $data);
+                Http::ok([
+                    'id' => $restored['id'],
+                    'title' => $restored['title'],
+                    'projects' => Db::all(
+                        'SELECT p.*, c.title AS concept_title FROM projects p LEFT JOIN concepts c ON c.id = p.concept_id WHERE p.user_id = ? ORDER BY p.updated_at DESC', [$userId]
+                    ),
+                ]);
+
             // ── Étape 1 : niche ──
             case 'market/analyze':
                 Http::requirePost();
@@ -543,6 +613,30 @@ final class Router
                     (string) Http::in('param', '')
                 ));
 
+            // ── Sections : édition directe et retouche IA ──
+            case 'sections/save':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $section = self::ownSection((int) $project['id'], (int) Http::in('section_id'));
+                $content = trim((string) Http::in('content', ''));
+                if (mb_strlen($content) < 20) {
+                    Http::error('Contenu trop court pour être enregistré.');
+                }
+                Db::run(
+                    "UPDATE sections SET content = ?, words = ?, status = 'done', updated_at = ? WHERE id = ?",
+                    [$content, Util::wordCount($content), Db::now(), (int) $section['id']]
+                );
+                Util::journal((int) $project['id'], 'ok', 'Section « ' . $section['title'] . ' » modifiée à la main');
+                Http::ok(['words' => Util::wordCount($content)]);
+
+            case 'sections/retouch':
+                Http::requirePost();
+                @set_time_limit(120);
+                $project = self::project((int) Http::in('id'), $userId);
+                $section = self::ownSection((int) $project['id'], (int) Http::in('section_id'));
+                $text = Writer::retouch($project, $section, (string) Http::in('instruction', ''));
+                Http::ok(['content' => $text, 'words' => Util::wordCount($text)]);
+
             // ── Visuels ──
             case 'images/upload':
                 self::uploadImage($userId);
@@ -624,6 +718,14 @@ final class Router
                         'on'   => (bool) $effective[$key],
                     ], array_keys(PdfBook::LAYOUT_OPTIONS), PdfBook::LAYOUT_OPTIONS),
                 ]);
+
+            case 'export/epub':
+                // eBook Kindle complet : chapitres, encadrés, photos, sommaire
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
+                $file = \App\Services\Epub::build($project, $book);
+                self::download($file, Util::slug($book['title']) . '.epub', 'application/epub+zip');
 
             case 'export/docx':
                 @set_time_limit(120);
@@ -877,6 +979,21 @@ final class Router
             Http::error('Sélectionnez d\'abord un livre (étape 2).');
         }
         return $concept;
+    }
+
+    /** Section appartenant bien au projet (avec contexte chapitre). */
+    private static function ownSection(int $projectId, int $sectionId): array
+    {
+        $section = Db::one(
+            "SELECT s.*, c.title AS chapter_title, c.num AS chapter_num, c.role AS chapter_role
+             FROM sections s JOIN chapters c ON c.id = s.chapter_id
+             WHERE s.id = ? AND c.project_id = ?",
+            [$sectionId, $projectId]
+        );
+        if (!$section) {
+            Http::error('Section introuvable.');
+        }
+        return $section;
     }
 
     private static function selectedConceptOrNull(array $project): ?array

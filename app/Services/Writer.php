@@ -229,6 +229,51 @@ final class Writer
         );
     }
 
+    /**
+     * RETOUCHE une section déjà rédigée selon une consigne libre de l'auteur
+     * (« plus court », « ajoute un exemple chiffré »…). Un seul appel IA,
+     * la section garde son statut : rien d'autre n'est réécrit.
+     */
+    public static function retouch(array $project, array $section, string $instruction): string
+    {
+        $instruction = trim($instruction);
+        if (mb_strlen($instruction) < 4) {
+            throw new \RuntimeException('Précisez la retouche souhaitée (ex. : « raccourcis d\'un tiers »).');
+        }
+        $current = trim((string) ($section['content'] ?? ''));
+        if ($current === '') {
+            throw new \RuntimeException('Cette section n\'est pas encore rédigée (lancez l\'étape 05).');
+        }
+        $calloutRule = "Encadrés : conserve la SYNTAXE EXACTE si tu en utilises —\n:::conseil\nTexte…\n:::\n"
+            . "(types autorisés : retenir, chiffre, conseil, exemple, faq, attention). Aucune autre mise en forme, pas de titres markdown.";
+
+        $prompt = "Tu es directeur littéraire. Voici une section du chapitre « {$section['chapter_title']} » "
+            . "(section « {$section['title']} ») d'un livre pratique en français, ton « {$project['tone']} ».\n\n"
+            . "TEXTE ACTUEL :\n---\n" . $current . "\n---\n\n"
+            . "CONSIGNE DE L'AUTEUR (prioritaire) : « {$instruction} »\n\n"
+            . "Réécris la section en appliquant précisément cette consigne, en conservant ce qui fonctionne, "
+            . "le même ton et une longueur comparable sauf si la consigne en décide autrement.\n"
+            . $calloutRule . "\n"
+            . "Réponds UNIQUEMENT avec le texte réécrit de la section, sans commentaire ni titre.";
+
+        $text = trim(Gemini::text($prompt, [
+            'model'       => 'pro',
+            'temperature' => 0.7,
+            'timeout'     => 75,
+            'retries'     => 0,
+            'system'      => 'Tu réécris des sections de livres pratiques impeccables, en français.',
+        ]));
+        if (Util::wordCount($text) < 60) {
+            throw new \RuntimeException('Réécriture trop courte — reformulez la consigne et relancez.');
+        }
+        Db::run(
+            "UPDATE sections SET content = ?, words = ?, updated_at = ? WHERE id = ?",
+            [$text, Util::wordCount($text), Db::now(), (int) $section['id']]
+        );
+        Util::journal((int) $project['id'], 'ok', 'Section « ' . $section['title'] . ' » retouchée : ' . mb_substr($instruction, 0, 80));
+        return $text;
+    }
+
     // ── Interne ────────────────────────────────────────────────────────────
 
     private static function writeSection(array $project, ?array $concept, array $section): string

@@ -156,6 +156,7 @@ final class Layout
 
         $fields = [
             ['k' => 'Format',             'v' => str_replace('x', ' × ', $project['trim_format']) . ' po'],
+            ['k' => 'Fond perdu',         'v' => 'Oui — téléverser en « avec fond perdu »'],
             ['k' => 'Marges int. / ext.', 'v' => str_replace('.', ',', (string) $geometry['margin_inner_mm']) . ' / ' . str_replace('.', ',', (string) $geometry['margin_outer_mm']) . ' mm'],
             ['k' => 'Marges haut / bas',  'v' => '19 / 19 mm'],
             ['k' => 'Police du texte',    'v' => 'Instrument Serif 11,2 pt'],

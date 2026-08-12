@@ -423,6 +423,9 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .reader-callout.k-exemple   { border-left-color: #8A4B6B;       background: #F5EEF2; }
 .reader-callout.k-faq       { border-left-color: var(--navy);   background: var(--bg); }
 .reader-callout.k-attention { border-left-color: #A03D2E;       background: #FAECE8; }
+.card-actions { display: flex; gap: 14px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 11.5px; color: var(--faint); font-family: var(--sans); }
+.card-actions span { cursor: pointer; }
+.card-actions span:hover { color: var(--accent); }
 .layout-composer { margin-bottom: 22px; padding: 16px 16px 10px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 12px; }
 .composer-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .composer-row:hover { background: #F4EDDD; }
@@ -440,6 +443,15 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .toc-request .row { display: flex; gap: 10px; }
 .toc-request input { flex: 1; padding: 9px 12px; font-size: 13px; }
 .toc-request .hint { margin-top: 8px; font-size: 11.5px; color: var(--faint); }
+.section-actions { display: flex; gap: 16px; margin: -6px 0 18px; font-size: 12px; color: var(--faint); font-family: var(--sans); }
+.section-actions span { cursor: pointer; }
+.section-actions span:hover { color: var(--accent); }
+.section-actions .faint { cursor: default; }
+.section-actions .faint:hover { color: var(--faint); }
+.section-edit { margin: 0 0 18px; }
+.section-edit textarea { width: 100%; padding: 12px 14px; font-size: 13.5px; line-height: 1.6; font-family: var(--mono); resize: vertical; }
+.section-edit .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.section-edit .hint { font-size: 11.5px; color: var(--faint); }
 .imagegen-box { margin-top: 10px; padding: 14px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 10px; }
 .imagegen-box textarea { width: 100%; padding: 9px 12px; font-size: 13px; resize: vertical; margin-bottom: 10px; }
 .imagegen-box .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

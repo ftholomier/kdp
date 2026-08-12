@@ -46,6 +46,12 @@ final class Watch
     {
         self::ensureTables();
         $term = mb_substr(trim($term), 0, 120);
+        // URL Amazon ou ASIN : suivi PRODUIT — collez la fiche de VOTRE livre
+        // publié pour suivre son prix, sa note et ses avis relevé par relevé.
+        if (preg_match('~amazon\.[a-z.]+/(?:[^\s]*/)?(?:dp|gp/product)/([A-Z0-9]{10})~i', $term, $m)
+            || preg_match('/^(B0[A-Z0-9]{8})$/i', $term, $m)) {
+            $term = strtoupper($m[1]);
+        }
         if (mb_strlen($term) < 2) {
             throw new \RuntimeException('Saisissez une niche à suivre (2 caractères minimum).');
         }

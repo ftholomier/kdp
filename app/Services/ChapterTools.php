@@ -32,7 +32,7 @@ final class ChapterTools
             );
             $chapter['label'] = 'Chapitre ' . ((int) ($before['n'] ?? 0) + 1);
         }
-        $sections = Db::all('SELECT num, title, status, content, words FROM sections WHERE chapter_id = ? ORDER BY num', [$chapter['id']]);
+        $sections = Db::all('SELECT id, num, title, status, content, words FROM sections WHERE chapter_id = ? ORDER BY num', [$chapter['id']]);
         $images = Db::all('SELECT slot, caption, spec, filename, id FROM images WHERE project_id = ? AND chapter_num = ? ORDER BY slot', [$projectId, $num]);
         return ['chapter' => $chapter, 'sections' => $sections, 'images' => $images, 'quality' => self::quality($chapter, $sections)];
     }

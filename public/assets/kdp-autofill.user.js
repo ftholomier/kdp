@@ -143,7 +143,12 @@
     fillField('isbn', p.isbn, report);
 
     const done = report.filter(r => r[0] === '✓').length;
-    setStatus(report.map(r => r.join(' ')).join('\n') +
+    const reglages = '\nRéglages d’impression à sélectionner :' +
+      '\n• Format : ' + (p.trim || '6x9').replace('x', ' × ') + ' po · ' + (p.pages || '?') + ' pages' +
+      '\n• Fond perdu : ' + (p.bleed ? 'AVEC fond perdu (obligatoire)' : 'sans fond perdu') +
+      '\n• Encre : ' + (p.ink === 'color' ? 'couleur' : 'noir & blanc') + ' · papier ' + (p.paper === 'white' ? 'blanc' : 'crème') +
+      (p.categories && p.categories.length ? '\nCatégories à choisir : ' + p.categories.join(' | ') : '');
+    setStatus(report.map(r => r.join(' ')).join('\n') + reglages +
       '\n— ' + done + ' champ(s) rempli(s). Vérifiez chaque valeur, les catégories se choisissent dans l’interface KDP, puis validez vous-même.', done === 0);
   }
 

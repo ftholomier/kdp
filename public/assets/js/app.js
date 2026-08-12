@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-12 · c18';
+  const BUILD = '2026-08-12 · c19';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -259,6 +259,10 @@
           <span>Étape ${pad2(p.step)} / 07 — ${esc(STEPS[p.step - 1] || '')}</span>
           <span class="mono">${esc((p.updated_at || '').slice(0, 10))}</span>
         </div>
+        <div class="card-actions" onclick="event.stopPropagation()">
+          <span onclick="App.duplicateProject(${p.id})" title="Nouveau livre avec les mêmes réglages (format, thème, recette de mise en page, palette)">⧉ Dupliquer</span>
+          <span onclick="window.open('api.php?r=projects/export&id=${p.id}', '_blank')" title="Sauvegarde complète du projet (JSON, images incluses)">⬇ Sauvegarder</span>
+        </div>
       </div>`).join('');
 
     return `
@@ -272,6 +276,9 @@
       <div class="projects-grid">
         <div class="project-new" onclick="App.createProject()">${S.busy.create ? 'Création…' : '+ Nouveau livre'}</div>
         ${cards}
+      </div>
+      <div style="margin-top:18px; font-size:12px; color:var(--faint);">
+        <span style="cursor:pointer; color:var(--accent);" onclick="App.importProject()">⬆ Restaurer un projet depuis une sauvegarde (.json)</span>
       </div>
     </div>
     ${S.modal || ''}`;
@@ -309,7 +316,7 @@
       </div>
 
       <div style="display:flex; gap:10px; margin:30px 0 22px; max-width:560px;">
-        <input type="text" id="watch-term" placeholder="Niche à suivre — ex. : carnet de gratitude, batch cooking…"
+        <input type="text" id="watch-term" placeholder="Niche à suivre — ou collez l’ASIN/le lien Amazon de votre livre publié"
                onkeydown="if(event.key==='Enter')App.addWatch()">
         <button class="btn btn-primary" style="flex:none;" onclick="App.addWatch()" ${S.busy.watchAdd ? 'disabled' : ''}>+ Suivre</button>
       </div>
@@ -334,6 +341,7 @@
 
   function watchCardView(w, canopy) {
     const s = w.snapshot;
+    const isAsin = /^B0[A-Z0-9]{8}$/.test(w.term);
     const dPrice = w.delta && w.delta.price !== null ? w.delta.price : null;
     const dReviews = w.delta && w.delta.reviews !== null ? w.delta.reviews : null;
     const deltaBadge = (value, unit, invert) => {
@@ -346,8 +354,8 @@
     <div class="theme-card" style="cursor:default;">
       <div class="top">
         <div>
-          <div class="name">${esc(w.term)}</div>
-          <div class="cat">${s ? 'Relevé du ' + esc((w.updated_at || '').slice(0, 16).replace('T', ' ')) : 'Jamais relevé'}</div>
+          <div class="name">${isAsin && s && s.top && s.top[0] ? esc(s.top[0].title) : esc(w.term)}</div>
+          <div class="cat">${isAsin ? '📕 Suivi produit · <a href="https://www.amazon.' + (({FR:'fr',COM:'com',DE:'de',ES:'es',IT:'it'})[(canopy && canopy.domain) || 'FR'] || 'fr') + '/dp/' + esc(w.term) + '" target="_blank" rel="noopener" style="color:var(--accent);">' + esc(w.term) + '</a> · ' : ''}${s ? 'Relevé du ' + esc((w.updated_at || '').slice(0, 16).replace('T', ' ')) : 'Jamais relevé'}</div>
         </div>
         <span style="color:var(--fainter); cursor:pointer; font-size:15px; padding:2px 6px;" title="Ne plus suivre" onclick="App.removeWatch(${w.id})">✕</span>
       </div>
@@ -1032,10 +1040,34 @@
           <h1>${esc(data.chapter.title)}</h1>
           ${data.sections.map((sec, i) => `
             ${i > 0 ? `<h3 class="sec serif">${esc(sec.title)}</h3>` : ''}
+            ${S.sectionEdit && S.sectionEdit.id === sec.id ? `
+            <div class="section-edit">
+              <textarea id="sec-edit-${sec.id}" rows="14">${esc(S.sectionEdit.content)}</textarea>
+              <div class="row">
+                <button class="btn btn-primary" onclick="App.saveSectionEdit(${sec.id})" ${S.busy.secsave ? 'disabled' : ''}>${S.busy.secsave ? '<span class="spinner"></span> Enregistrement…' : 'Enregistrer'}</button>
+                <button class="btn btn-ghost" onclick="App.closeSectionEdit()">Annuler</button>
+                <span class="hint">Syntaxe des encadrés : <code>:::conseil</code> … <code>:::</code> · listes avec « – »</span>
+              </div>
+            </div>` : `
             <div class="reader-prose">
               ${sec.content ? blocksHtml(sec.content)
                 : '<p class="muted" style="font-family:var(--sans); font-size:14px;">Section pas encore rédigée.</p>'}
             </div>
+            ${sec.content ? `
+            <div class="section-actions">
+              <span onclick="App.openSectionEdit(${sec.id})">✎ Modifier le texte</span>
+              <span onclick="App.openSectionRetouch(${sec.id})">↻ Retoucher par l'IA</span>
+              <span class="faint">${nf(sec.words || 0)} mots</span>
+            </div>` : ''}
+            ${S.sectionRetouch && S.sectionRetouch.id === sec.id ? `
+            <div class="imagegen-box">
+              <textarea id="sec-retouch-${sec.id}" rows="2" placeholder="Votre consigne — ex. : raccourcis d'un tiers, ajoute un exemple chiffré, ton plus direct…">${esc(S.sectionRetouch.prompt || '')}</textarea>
+              <div class="row">
+                <button class="btn btn-soft" onclick="App.runSectionRetouch(${sec.id})" ${S.busy.secretouch ? 'disabled' : ''}>${S.busy.secretouch ? '<span class="spinner"></span> Réécriture…' : '↻ Retoucher cette section'}</button>
+                <button class="btn btn-ghost" onclick="App.closeSectionRetouch()">Fermer</button>
+                <span class="hint">Une section = un appel IA. Le reste du livre ne bouge pas.</span>
+              </div>
+            </div>` : ''}`}
             ${i === 0 ? figuresView(data) : ''}
           `).join('')}
           <div class="reader-pager">
@@ -1184,7 +1216,8 @@
           <div class="btns">
             <button class="btn btn-light" onclick="window.open('api.php?r=export/pdf&id=${S.project.id}', '_blank')">📘 PDF intérieur (KDP) — polices incorporées</button>
             <button class="btn btn-light" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 PDF couverture broché (KDP) · dos ${esc(L.spine_label)}</button>
-            <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/docx&id=${S.project.id}', '_blank')">Manuscrit .docx (Kindle eBook)</button>
+            <button class="btn btn-light" onclick="window.open('api.php?r=export/epub&id=${S.project.id}', '_blank')">📱 eBook Kindle (.epub) — photos & encadrés inclus</button>
+            <button class="btn btn-outline-light" onclick="window.open('api.php?r=export/docx&id=${S.project.id}', '_blank')">Manuscrit .docx</button>
             <button class="btn btn-outline-light" onclick="window.open('print.php?id=${S.project.id}', '_blank')">Aperçu de l'épreuve navigateur ↗</button>
             <button class="btn btn-light" style="background:var(--accent); color:#FFF6EA;" onclick="App.openPublishModal()">🚀 Publier sur Amazon KDP</button>
           </div>
@@ -2150,6 +2183,54 @@
       runChapterAction('rewrite', tone);
     },
 
+    openSectionEdit(sectionId) {
+      const sec = ((S.reader.data || {}).sections || []).find(s => Number(s.id) === Number(sectionId));
+      if (!sec) return;
+      S.sectionRetouch = null;
+      S.sectionEdit = { id: sectionId, content: sec.content || '' };
+      render();
+    },
+
+    closeSectionEdit() { S.sectionEdit = null; render(); },
+
+    async saveSectionEdit(sectionId) {
+      const box = document.getElementById('sec-edit-' + sectionId);
+      const content = box ? box.value : '';
+      setBusy('secsave', true);
+      try {
+        await Api.post('sections/save', { id: S.project.id, section_id: sectionId, content });
+        S.sectionEdit = null;
+        toast('Section enregistrée.');
+        await loadChapter(S.reader.num);
+      } catch (e) { toast(e.message, true); }
+      setBusy('secsave', false);
+    },
+
+    openSectionRetouch(sectionId) {
+      S.sectionEdit = null;
+      S.sectionRetouch = { id: sectionId, prompt: S.sectionRetouch && S.sectionRetouch.id === sectionId ? S.sectionRetouch.prompt : '' };
+      render();
+      const box = document.getElementById('sec-retouch-' + sectionId);
+      if (box) box.focus();
+    },
+
+    closeSectionRetouch() { S.sectionRetouch = null; render(); },
+
+    async runSectionRetouch(sectionId) {
+      const box = document.getElementById('sec-retouch-' + sectionId);
+      const instruction = box ? box.value.trim() : '';
+      if (instruction.length < 4) { toast('Précisez votre consigne de retouche.', true); return; }
+      if (S.sectionRetouch) S.sectionRetouch.prompt = instruction;
+      setBusy('secretouch', true);
+      try {
+        await Api.post('sections/retouch', { id: S.project.id, section_id: sectionId, instruction });
+        S.sectionRetouch = null;
+        toast('Section retouchée — relisez le résultat.');
+        await loadChapter(S.reader.num);
+      } catch (e) { toast(e.message, true); }
+      setBusy('secretouch', false);
+    },
+
     openImageGen(imageId) {
       const img = ((S.reader.data || {}).images || []).find(i => Number(i.id) === Number(imageId)) || {};
       S.imageGen = { id: imageId, prompt: S.imageGen && S.imageGen.id === imageId ? S.imageGen.prompt : (img.caption || '') };
@@ -2194,6 +2275,33 @@
     },
 
     next6() { S.step = 7; enterStep(); render(); window.scrollTo(0, 0); },
+
+    async duplicateProject(projectId) {
+      try {
+        const data = await Api.post('projects/duplicate', { id: projectId });
+        S.projects = data.projects;
+        render();
+        toast('Projet dupliqué avec les mêmes réglages — décrivez la nouvelle idée à l\'étape 01.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    importProject() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json,.json';
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const form = new FormData();
+        form.append('file', input.files[0]);
+        try {
+          const data = await Api.upload('projects/import', form);
+          S.projects = data.projects;
+          render();
+          toast('Projet restauré : « ' + data.title + ' ».');
+        } catch (e) { toast(e.message, true); }
+      };
+      input.click();
+    },
 
     async setInteriorTheme(slug) {
       try {

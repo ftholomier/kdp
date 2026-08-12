@@ -133,6 +133,9 @@ final class PdfComposer
     private float $bodySize = self::BODY_SIZE;
     private float $leading = self::LEADING;
 
+    /** Fond perdu KDP en points (3,175 mm) : haut, bas et bord extérieur. */
+    private float $bleedPt = 0.0;
+
     public function __construct(
         private array $geometry,
         private array $book,
@@ -143,6 +146,7 @@ final class PdfComposer
         $mm = fn (float $v): float => $v * 72 / 25.4;
         $this->w = $mm($geometry['w_mm']);
         $this->h = $mm($geometry['h_mm']);
+        $this->bleedPt = $mm((float) ($geometry['bleed_mm'] ?? 3.175));
         $this->top = $mm($geometry['margin_top_mm']);
         $this->bottom = $mm($geometry['margin_bottom_mm']);
         $this->inner = $mm($geometry['margin_inner_mm']);
@@ -170,7 +174,12 @@ final class PdfComposer
 
     private function newPdf(): MiniPdf
     {
-        $pdf = new MiniPdf($this->w, $this->h);
+        // Page AVEC FOND PERDU : rogné + 3,175 mm en haut, en bas et sur le
+        // bord extérieur (exigence KDP dès qu'un aplat touche le bord — à
+        // téléverser avec l'option « avec fond perdu »). La composition reste
+        // en coordonnées rognées : chaque page reçoit sa translation
+        // recto/verso dans newPage().
+        $pdf = new MiniPdf($this->w + $this->bleedPt, $this->h + 2 * $this->bleedPt);
         $fonts = APP_ROOT . '/app/fonts/';
         $pdf->addTtf('body', $fonts . 'InstrumentSerif-Regular.ttf');
         $pdf->addTtf('italic', $fonts . 'InstrumentSerif-Italic.ttf');
@@ -258,7 +267,7 @@ final class PdfComposer
         $y = $this->h * 0.30;
         switch ($this->opener) {
             case 'band':
-                $this->pdf->rectRgb(0, $y - 46, $this->w, 8, $this->accent);
+                $this->pdf->rectRgb(-$this->bleedPt, $y - 46, $this->w + 2 * $this->bleedPt, 8, $this->accent);
                 break;
             case 'number':
                 $this->pdf->rectRgb(($this->w - 26) / 2, $y - 48, 26, 26, $this->accent);
@@ -266,7 +275,7 @@ final class PdfComposer
             case 'premium':
                 // Aplat décalé partant du bord — signature magazine
                 if ($this->opt('deco')) {
-                    $this->pdf->rectRgb(0, $y - 58, $this->w * 0.36, 13, $this->accent);
+                    $this->pdf->rectRgb(-$this->bleedPt, $y - 58, $this->w * 0.36 + $this->bleedPt, 13, $this->accent);
                     $this->pdf->rectRgb($this->w * 0.36 + 6, $y - 58, 13, 13, $this->accentSoft);
                 }
                 break;
@@ -600,7 +609,7 @@ final class PdfComposer
             case 'band':
                 // Bandeau accent pleine largeur, titre réversé
                 $bandH = 108.0;
-                $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
+                $this->pdf->rectRgb(-$this->bleedPt, -$this->bleedPt, $this->w + 2 * $this->bleedPt, $bandH + $this->bleedPt, $this->accent);
                 $this->pdf->text($left, 40, 'label', 8, $label, 0, 2.4, [255, 255, 255]);
                 $ty = 70.0;
                 foreach ($this->wrapText($chapter['title'], 'display', 25, $width) as $i => $line) {
@@ -638,7 +647,8 @@ final class PdfComposer
                 // à l'autre pour varier le rythme des ouvertures.
                 $bandH = max(186.0, $this->h * 0.285);
                 $fg = $this->reverseInk();
-                $this->pdf->rectRgb(0, 0, $this->w, $bandH, $this->accent);
+                $b = $this->bleedPt;
+                $this->pdf->rectRgb(-$b, -$b, $this->w + 2 * $b, $bandH + $b, $this->accent);
                 if ($isChapter && $displayNum !== '' && $this->opt('chapnum')) {
                     $numText = str_pad($displayNum, 2, '0', STR_PAD_LEFT);
                     $numW = $this->pdf->width($numText, 'sans', 66);
@@ -658,9 +668,9 @@ final class PdfComposer
                 if ($this->opt('deco')) {
                     $flip = $isChapter && $displayNum !== '' && ((int) $displayNum % 2 === 0);
                     if ($flip) {
-                        $this->pdf->rectRgb($this->w * 0.56, $bandH + 12, $this->w * 0.44, 6.5, $this->accentSoft);
+                        $this->pdf->rectRgb($this->w * 0.56, $bandH + 12, $this->w * 0.44 + $this->bleedPt, 6.5, $this->accentSoft);
                     } else {
-                        $this->pdf->rectRgb(0, $bandH + 12, $this->w * 0.44, 6.5, $this->accentSoft);
+                        $this->pdf->rectRgb(-$this->bleedPt, $bandH + 12, $this->w * 0.44 + $this->bleedPt, 6.5, $this->accentSoft);
                     }
                 }
                 return $bandH + 46;
@@ -810,7 +820,7 @@ final class PdfComposer
                     $this->pdf->roundRectRgb($left, $y - 6, 34, 7, 3.5, $this->accent);
                     $this->pdf->text($left + 44, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
                 } else {
-                    $this->pdf->rectRgb(0, $y - 7, max(10.0, $left - 9), 9, $this->accent);
+                    $this->pdf->rectRgb(-$this->bleedPt, $y - 7, max(10.0, $left - 9) + $this->bleedPt, 9, $this->accent);
                     $this->pdf->text($left, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
                 }
                 $y += 30;
@@ -957,7 +967,7 @@ final class PdfComposer
         } else {
             $fg = $this->reverseInk();
             $labelFg = $fg;
-            $this->pdf->rectRgb(0, $y, $this->w, $boxH, $this->accent);
+            $this->pdf->rectRgb(-$this->bleedPt, $y, $this->w + 2 * $this->bleedPt, $boxH, $this->accent);
         }
         $ty = $y + $pad + 4;
         $this->pdf->text($left + $pad, $ty, $this->labelFont(), 7.4, $label, 0, 2.6, $labelFg);
@@ -1133,6 +1143,10 @@ final class PdfComposer
     {
         $this->pageNum++;
         $this->pdf->newPage();
+        // Fond perdu : le bloc rogné se cale contre la gouttière — le recto
+        // (impair) colle à gauche, le verso reçoit le fond perdu à gauche.
+        $isRecto = $this->pageNum % 2 === 1;
+        $this->pdf->setPageTransform($isRecto ? 0.0 : $this->bleedPt, -$this->bleedPt);
         if ($this->pageNum >= 9 && $kind === 'normal') {
             $this->drawRunningHead();
             $this->drawFolio();
@@ -1457,6 +1471,17 @@ final class MiniPdf
         }
         $this->current = '';
         $this->open = true;
+    }
+
+    /**
+     * Translation de la page courante (fond perdu recto/verso) : à appeler
+     * juste après newPage(), avant tout dessin.
+     */
+    public function setPageTransform(float $tx, float $ty): void
+    {
+        if (abs($tx) > 0.01 || abs($ty) > 0.01) {
+            $this->current .= sprintf("1 0 0 1 %.2F %.2F cm\n", $tx, $ty);
+        }
     }
 
     public function addBlankPage(): void

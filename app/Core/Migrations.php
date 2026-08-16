@@ -22,6 +22,7 @@ final class Migrations
         self::ensureColumn('projects', 'layout_options', 'TEXT NULL AFTER interior_theme');
         self::ensureColumn('chapters', 'role', "ENUM('chapter','intro','conclusion') NOT NULL DEFAULT 'chapter' AFTER num");
         self::ensureColumn('covers', 'layout_json', 'MEDIUMTEXT NULL');
+        self::ensureColumn('covers', 'layout_back_json', 'MEDIUMTEXT NULL');
         self::ensureColumn('kdp_meta', 'asin', 'VARCHAR(20) NULL AFTER isbn');
         self::ensureColumn('kdp_meta', 'aplus_json', 'MEDIUMTEXT NULL');
         self::ensureColumn('projects', 'translate_from', 'INT UNSIGNED NULL');

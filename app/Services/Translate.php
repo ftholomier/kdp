@@ -57,6 +57,15 @@ final class Translate
                 $titleLines[] = 'COVER_' . strtoupper($key) . ' : ' . $texts[$key];
             }
         }
+        // ÉLÉMENTS de l'éditeur visuel : la conception exacte (positions, polices,
+        // graisses, couleurs, motifs) est conservée telle quelle — seuls les
+        // TEXTES des éléments partent en traduction, ligne par ligne.
+        $coverEls = $cover ? (json_decode((string) ($cover['layout_json'] ?? ''), true) ?: []) : [];
+        foreach ($coverEls as $i => $el) {
+            if (($el['type'] ?? '') === 'text' && trim((string) ($el['text'] ?? '')) !== '') {
+                $titleLines[] = 'COVEREL_' . $i . ' : ' . str_replace("\n", ' ', (string) $el['text']);
+            }
+        }
 
         $data = Gemini::json(
             "TRADUIS en {$lang} chacune de ces lignes (titres de chapitres/sections et textes de couverture d'un livre pratique). "
@@ -116,18 +125,51 @@ final class Translate
                 );
             }
 
-            // Couverture : même identité graphique, textes traduits
+            // Couverture : conception STRICTEMENT identique (gabarit, palette,
+            // éléments de l'éditeur, illustration IA), textes traduits.
             if ($cover) {
                 foreach (['title', 'subtitle', 'tagline', 'back_text', 'bio'] as $key) {
                     if (!empty($texts[$key])) {
                         $texts[$key] = $lines['COVER_' . strtoupper($key)] ?? $texts[$key];
                     }
                 }
+                // Éléments : on ne touche QUE la propriété « text » ; position,
+                // taille, police, graisse, couleur, motifs restent à l'identique.
+                foreach ($coverEls as $i => &$el) {
+                    if (($el['type'] ?? '') !== 'text') {
+                        continue;
+                    }
+                    $original = (string) ($el['text'] ?? '');
+                    $translated = trim((string) ($lines['COVEREL_' . $i] ?? ''));
+                    if ($translated === '' || $original === '') {
+                        continue;
+                    }
+                    // Un texte tout en capitales le reste après traduction
+                    if ($original !== '' && mb_strtoupper($original) === $original && preg_match('/\p{L}/u', $original)) {
+                        $translated = mb_strtoupper($translated);
+                    }
+                    $el['text'] = $translated;
+                }
+                unset($el);
+
                 Db::run(
-                    'INSERT INTO covers (project_id, template, palette, texts, updated_at) VALUES (?,?,?,?,?)',
+                    'INSERT INTO covers (project_id, template, palette, texts, layout_json, updated_at) VALUES (?,?,?,?,?,?)',
                     [$newId, (string) $cover['template'], (string) $cover['palette'],
-                     json_encode($texts, JSON_UNESCAPED_UNICODE), Db::now()]
+                     json_encode($texts, JSON_UNESCAPED_UNICODE),
+                     $coverEls ? json_encode($coverEls, JSON_UNESCAPED_UNICODE) : null,
+                     Db::now()]
                 );
+
+                // Illustration IA et image de référence : recopiées sur le
+                // nouveau projet (sans elles, la couverture perdrait son visuel).
+                foreach ([
+                    [CoverStudio::illusPath($sourceId), CoverStudio::illusPath($newId)],
+                    [CoverStudio::refPath($sourceId), CoverStudio::refPath($newId)],
+                ] as [$from, $to]) {
+                    if (is_file($from)) {
+                        @copy($from, $to);
+                    }
+                }
             }
 
             $pdo->commit();

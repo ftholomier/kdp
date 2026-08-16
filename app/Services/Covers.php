@@ -42,26 +42,35 @@ final class Covers
     /** Colonne layout_json (éléments de l'éditeur) : migration automatique. */
     private static function ensureLayoutColumn(): void
     {
-        try {
-            Db::one('SELECT layout_json FROM covers LIMIT 1');
-        } catch (\PDOException $e) {
+        foreach (['layout_json', 'layout_back_json'] as $column) {
             try {
-                Db::pdo()->exec('ALTER TABLE covers ADD COLUMN layout_json MEDIUMTEXT NULL');
-            } catch (\Throwable $inner) {
-                // concurrence : une autre requête a pu l'ajouter
+                Db::one("SELECT {$column} FROM covers LIMIT 1");
+            } catch (\PDOException $e) {
+                try {
+                    Db::pdo()->exec("ALTER TABLE covers ADD COLUMN {$column} MEDIUMTEXT NULL");
+                } catch (\Throwable $inner) {
+                    // concurrence : une autre requête a pu l'ajouter
+                }
             }
         }
     }
 
-    /** Enregistre les éléments de l'éditeur + synchronise les textes canon. */
-    public static function saveLayout(int $projectId, array $els): array
+    /**
+     * Enregistre les éléments de l'éditeur pour une FACE ('front' | 'back')
+     * + synchronise les textes canon (1ère de couverture uniquement).
+     */
+    public static function saveLayout(int $projectId, array $els, string $face = 'front'): array
     {
         self::ensureLayoutColumn();
         $clean = CoverStudio::sanitizeElements($els);
+        $column = $face === 'back' ? 'layout_back_json' : 'layout_json';
         Db::run(
-            'UPDATE covers SET layout_json = ?, updated_at = ? WHERE project_id = ?',
+            "UPDATE covers SET {$column} = ?, updated_at = ? WHERE project_id = ?",
             [json_encode($clean, JSON_UNESCAPED_UNICODE), Db::now(), $projectId]
         );
+        if ($face === 'back') {
+            return $clean;
+        }
         // Les textes des éléments title/tagline/subtitle restent la référence
         $row = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
         $texts = json_decode((string) ($row['texts'] ?? ''), true) ?: [];
@@ -101,7 +110,8 @@ final class Covers
         $row['palette'] = json_decode((string) $row['palette'], true) ?: [];
         $row['texts'] = json_decode((string) $row['texts'], true) ?: [];
         $row['els'] = json_decode((string) ($row['layout_json'] ?? ''), true) ?: null;
-        unset($row['layout_json']);
+        $row['els_back'] = json_decode((string) ($row['layout_back_json'] ?? ''), true) ?: null;
+        unset($row['layout_json'], $row['layout_back_json']);
         return $row;
     }
 
@@ -122,6 +132,18 @@ final class Covers
             $cover['texts'],
             $hasIllustration
         );
+    }
+
+    /**
+     * Éléments effectifs de la 4ème de couverture : ceux édités dans le studio,
+     * sinon la 4ème composée automatiquement à partir des textes.
+     */
+    public static function backElements(array $cover): array
+    {
+        if (!empty($cover['els_back']) && is_array($cover['els_back'])) {
+            return $cover['els_back'];
+        }
+        return CoverStudio::backElements($cover['palette'], $cover['texts']);
     }
 
     public static function save(int $projectId, string $template, array $palette, array $texts): void
@@ -155,9 +177,12 @@ final class Covers
 
         // Répercute les textes canon dans les éléments édités (titre, accroche…)
         self::ensureLayoutColumn();
-        $row = Db::one('SELECT layout_json FROM covers WHERE project_id = ?', [$projectId]);
-        $els = json_decode((string) ($row['layout_json'] ?? ''), true);
-        if (is_array($els) && $els) {
+        $row = Db::one('SELECT layout_json, layout_back_json FROM covers WHERE project_id = ?', [$projectId]);
+        foreach (['layout_json', 'layout_back_json'] as $column) {
+            $els = json_decode((string) ($row[$column] ?? ''), true);
+            if (!is_array($els) || !$els) {
+                continue;
+            }
             $changed = false;
             foreach ($els as &$el) {
                 $id = $el['id'] ?? '';
@@ -168,7 +193,7 @@ final class Covers
             }
             unset($el);
             if ($changed) {
-                Db::run('UPDATE covers SET layout_json = ? WHERE project_id = ?', [json_encode($els, JSON_UNESCAPED_UNICODE), $projectId]);
+                Db::run("UPDATE covers SET {$column} = ? WHERE project_id = ?", [json_encode($els, JSON_UNESCAPED_UNICODE), $projectId]);
             }
         }
     }

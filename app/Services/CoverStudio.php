@@ -372,6 +372,53 @@ final class CoverStudio
         return (string) Config::get('paths.uploads') . '/cover-ref-' . $projectId . '.jpg';
     }
 
+    /**
+     * BIBLIOTHÈQUE d'illustrations du projet : chaque génération IA y est
+     * conservée (rien n'est écrasé). L'illustration ACTIVE reste illusPath(),
+     * simple copie de l'entrée choisie.
+     */
+    public static function illusItemPath(int $projectId, string $slug): string
+    {
+        $slug = preg_replace('/[^a-z0-9]/i', '', $slug) ?: 'x';
+        return (string) Config::get('paths.uploads') . '/cover-lib-' . $projectId . '-' . $slug . '.jpg';
+    }
+
+    /** @return array<int,array{slug:string,created_at:int,active:bool}> du plus récent au plus ancien */
+    public static function illusLibrary(int $projectId): array
+    {
+        $dir = (string) Config::get('paths.uploads');
+        $active = is_file(self::illusPath($projectId)) ? md5_file(self::illusPath($projectId)) : null;
+        $out = [];
+        foreach (glob($dir . '/cover-lib-' . $projectId . '-*.jpg') ?: [] as $file) {
+            if (!preg_match('/-([a-z0-9]+)\.jpg$/i', $file, $m)) {
+                continue;
+            }
+            $out[] = [
+                'slug'       => $m[1],
+                'created_at' => (int) filemtime($file),
+                'active'     => $active !== null && md5_file($file) === $active,
+            ];
+        }
+        // Ordre stable : plus récent d'abord, départage par slug quand deux
+        // créations partagent la même seconde (l'affichage ne « saute » jamais).
+        usort($out, fn ($a, $b) => [$b['created_at'], $b['slug']] <=> [$a['created_at'], $a['slug']]);
+        return $out;
+    }
+
+    /** Ajoute une image à la bibliothèque et la rend active. Retourne le slug. */
+    public static function addToLibrary(int $projectId, string $jpegBinary): string
+    {
+        $slug = substr(bin2hex(random_bytes(6)), 0, 10);
+        $file = self::illusItemPath($projectId, $slug);
+        $dir = dirname($file);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        file_put_contents($file, $jpegBinary);
+        @copy($file, self::illusPath($projectId));
+        return $slug;
+    }
+
     public static function defaultPrompt(array $texts): string
     {
         $title = trim((string) ($texts['title'] ?? ''));
@@ -403,8 +450,13 @@ final class CoverStudio
         if (!is_dir($dir)) {
             mkdir($dir, 0775, true);
         }
-        imagejpeg($src, self::illusPath($projectId), 94);
+        ob_start();
+        imagejpeg($src, null, 94);
+        $jpeg = (string) ob_get_clean();
         imagedestroy($src);
+        // Chaque création REJOINT la bibliothèque du livre (rien n'est écrasé)
+        // et devient l'illustration active.
+        self::addToLibrary($projectId, $jpeg);
         return self::illusPath($projectId);
     }
 

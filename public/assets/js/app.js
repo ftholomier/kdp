@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-13 · c21';
+  const BUILD = '2026-08-13 · c22';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -189,7 +189,26 @@
       S.writer = { status: null, journal: [], lastId: 0, looping: false, incident: null };
       S.reader = { num: 1, data: null };
       S.layout = null;
+      // Tout l'état lié au livre PRÉCÉDENT est vidé : couverture, propositions
+      // et graine de variantes, thèmes/composeur de mise en page, métadonnées
+      // KDP, rangs de mots-clés, éditions en cours. Sans cela, un livre
+      // affichait les propositions et réglages d'un autre.
       S.cover = null;
+      S.coverVariants = null;
+      S.coverSeed = 1;
+      S.coverFace = 'front';
+      S.coverElsFront = null;
+      S.coverElsBack = null;
+      S.coverLibrary = null;
+      S.editorEls = null;
+      S.interiorThemes = null;
+      S.layoutOptions = null;
+      S.kdpMeta = null;
+      S.keywordRanks = null;
+      S.sectionEdit = null;
+      S.sectionRetouch = null;
+      S.imageGen = null;
+      S.modal = null;
       enterStep();
     } catch (e) {
       toast(e.message, true);
@@ -755,6 +774,17 @@
             ${S.coverHasIllustration ? `<button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px;" onclick="App.clearIllustration()" title="Revenir au motif géométrique">✕</button>` : ''}
           </div>
           <div class="faint" style="font-size:11px; margin-top:7px;">Sans illustration IA, un motif géométrique flat assorti est dessiné automatiquement.</div>
+          ${(S.coverLibrary || []).length ? `
+          <div class="illus-library">
+            <div class="lbl">Vos créations (${S.coverLibrary.length}) — cliquez pour appliquer</div>
+            <div class="strip">
+              ${S.coverLibrary.map(it => `
+              <div class="item ${it.active ? 'on' : ''}" title="${it.active ? 'Illustration active' : 'Appliquer cette création'}">
+                <img src="api.php?r=coverstudio/illus-file&id=${S.project.id}&item=${esc(it.slug)}" alt="" onclick="App.selectIllustration('${esc(it.slug)}')">
+                <span class="del" title="Supprimer de la bibliothèque" onclick="App.deleteIllustration('${esc(it.slug)}')">✕</span>
+              </div>`).join('')}
+            </div>
+          </div>` : ''}
 
           <div style="font-size:14px; font-weight:600; margin:20px 0 10px;">Palette</div>
           <div class="palette-row">
@@ -781,10 +811,16 @@
 
         <div>
           <div class="card" style="padding:14px;">
+            <div class="face-switch">
+              <span class="${(S.coverFace || 'front') === 'front' ? 'on' : ''}" onclick="App.setCoverFace('front')">1ère de couverture</span>
+              <span class="${S.coverFace === 'back' ? 'on' : ''}" onclick="App.setCoverFace('back')">4ème de couverture</span>
+              <span class="hint">${S.coverFace === 'back' ? 'Glissez, redimensionnez, changez polices et couleurs — comme la 1ère.' : 'Cliquez « 4ème » pour la voir en grand et la retravailler.'}</span>
+              ${S.coverFace === 'back' ? '<button class="btn btn-ghost" style="padding:5px 10px; font-size:11.5px; margin-left:auto;" onclick="App.resetFace()">↺ 4ème automatique</button>' : ''}
+            </div>
             <div id="ed-toolbar" class="editor-toolbar"></div>
             <div class="editor-wrap"><div id="ed-stage"></div></div>
             <div class="editor-downloads">
-              <button class="btn btn-ghost" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&t=' + Date.now(), '_blank')">Aperçu HD ↗</button>
+              <button class="btn btn-ghost" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/${S.coverFace === 'back' ? 'back' : 'front'}&id=${S.project.id}&t=' + Date.now(), '_blank')">Aperçu HD ${S.coverFace === 'back' ? '4ème' : '1ère'} ↗</button>
               <button class="btn btn-soft" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&download=1', '_blank')">JPG eBook (1600×2560)</button>
               <button class="btn btn-primary" style="padding:8px 12px; font-size:12px;" onclick="window.open('api.php?r=export/cover-pdf&id=${S.project.id}', '_blank')">📕 PDF broché complet (KDP)</button>
             </div>
@@ -798,8 +834,15 @@
             </div>
           </div>
           <div style="display:flex; gap:14px; margin-top:14px; align-items:flex-start;">
-            <img id="cover-back-img" src="api.php?r=coverstudio/back&id=${S.project.id}&t=${S.coverStamp || 0}" alt="4ème de couverture" style="width:130px; border-radius:3px; box-shadow:0 6px 18px rgba(48,40,26,.2);">
-            <div class="faint" style="font-size:11.5px; line-height:1.5; padding-top:4px;">4ème de couverture — générée automatiquement (accroche, texte de vente, bio, zone code-barres). Modifiez ses textes dans le panneau de gauche.</div>
+            <img id="cover-back-img" src="api.php?r=coverstudio/${(S.coverFace || 'front') === 'back' ? 'front' : 'back'}&id=${S.project.id}&t=${S.coverStamp || 0}"
+                 alt="${S.coverFace === 'back' ? '1ère de couverture' : '4ème de couverture'}" title="Cliquez pour éditer cette face en grand"
+                 style="width:130px; border-radius:3px; box-shadow:0 6px 18px rgba(48,40,26,.2); cursor:pointer;"
+                 onclick="App.setCoverFace('${(S.coverFace || 'front') === 'back' ? 'front' : 'back'}')">
+            <div class="faint" style="font-size:11.5px; line-height:1.5; padding-top:4px;">
+              ${S.coverFace === 'back'
+                ? 'Vous éditez la <strong>4ème de couverture</strong>. Aperçu de la 1ère ci-contre — cliquez dessus pour y revenir.'
+                : 'Aperçu de la <strong>4ème de couverture</strong> (accroche, texte de vente, bio, zone code-barres). Cliquez dessus — ou sur l\'onglet — pour l\'éditer en grand.'}
+            </div>
           </div>
         </div>
       </div>`}
@@ -810,7 +853,11 @@
     try {
       const data = await Api.get('covers/get', { id: S.project.id });
       S.cover = data.cover;
-      S.editorEls = data.els;
+      S.coverFace = S.coverFace === 'back' ? 'back' : 'front';
+      S.coverElsFront = data.els;
+      S.coverElsBack = data.els_back;
+      S.editorEls = S.coverFace === 'back' ? data.els_back : data.els;
+      S.coverLibrary = data.library || [];
       S.coverFonts = data.fonts;
       S.coverMotifs = data.motifs;
       S.coverGeometry = data.geometry;
@@ -834,6 +881,14 @@
 
   function refreshFrontPreview() {
     S.coverStamp = Date.now();
+  }
+
+  function refreshBackPreview() {
+    S.coverStamp = Date.now();
+    const img = document.getElementById('cover-back-img');
+    if (img && img.src.includes('coverstudio/back')) {
+      img.src = 'api.php?r=coverstudio/back&id=' + S.project.id + '&t=' + Date.now();
+    }
   }
 
   function injectCoverPreviews() {
@@ -1638,7 +1693,8 @@
     function save() {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
-        Api.post('coverstudio/layout-save', { id: S.project.id, els: S.editorEls })
+        Api.post('coverstudio/layout-save', { id: S.project.id, els: S.editorEls, face: S.coverFace || 'front' })
+          .then(() => { if (S.coverFace === 'back') refreshBackPreview(); })
           .catch(e => toast(e.message, true));
       }, 600);
     }
@@ -2094,6 +2150,55 @@
     setCoverColor(key, value) { S.cover.palette[key] = value; saveCover(); },
     setCoverText(key, value) { S.cover.texts[key] = value; saveCover(); },
 
+    setCoverFace(face) {
+      const next = face === 'back' ? 'back' : 'front';
+      if (next === (S.coverFace || 'front')) return;
+      // La face quittée garde ses éléments en mémoire (déjà enregistrés côté serveur)
+      if ((S.coverFace || 'front') === 'back') S.coverElsBack = S.editorEls;
+      else S.coverElsFront = S.editorEls;
+      S.coverFace = next;
+      S.editorEls = next === 'back' ? S.coverElsBack : S.coverElsFront;
+      S.coverStamp = Date.now();
+      render();
+    },
+
+    async resetFace() {
+      const face = S.coverFace || 'front';
+      if (!confirm(face === 'back'
+        ? 'Revenir à la 4ème de couverture composée automatiquement ? Vos retouches sur cette face seront perdues.'
+        : 'Revenir à la 1ère de couverture de la version choisie ? Vos retouches seront perdues.')) return;
+      try {
+        const data = await Api.post('coverstudio/layout-reset', { id: S.project.id, face });
+        S.editorEls = data.els;
+        if (face === 'back') S.coverElsBack = data.els; else S.coverElsFront = data.els;
+        S.coverStamp = Date.now();
+        render();
+        toast('Composition automatique restaurée.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async selectIllustration(slug) {
+      try {
+        const data = await Api.post('coverstudio/illus-select', { id: S.project.id, slug });
+        S.coverLibrary = data.library;
+        S.coverHasIllustration = true;
+        S.coverStamp = Date.now();
+        render();
+        toast('Illustration appliquée à la couverture.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async deleteIllustration(slug) {
+      if (!confirm('Supprimer cette création de la bibliothèque ?')) return;
+      try {
+        const data = await Api.post('coverstudio/illus-delete', { id: S.project.id, slug });
+        S.coverLibrary = data.library;
+        S.coverHasIllustration = data.library.length > 0;
+        S.coverStamp = Date.now();
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
     async newCoverVariants() {
       S.coverSeed = (S.coverSeed || 1) + 1;
       await loadCoverVariants();
@@ -2122,9 +2227,11 @@
         const data = await Api.post('coverstudio/illustration', { id: S.project.id, prompt });
         S.coverHasIllustration = true;
         S.coverStamp = Date.now();
-        if (data.cover) { S.cover = data.cover; S.editorEls = data.cover.els; }
+        S.coverLibrary = data.library || S.coverLibrary || [];
+        S.coverFace = 'front';   // la nouvelle illustration s'applique à la 1ère
+        if (data.cover) { S.cover = data.cover; S.coverElsFront = data.cover.els; S.editorEls = data.cover.els; }
         if (S.coverVariants) S.coverVariants.forEach(v => { v.selected = false; });
-        toast('Illustration générée — affichée en pleine page, retouchable dans l’éditeur.');
+        toast('Illustration générée et ajoutée à votre bibliothèque (' + (S.coverLibrary.length) + ') — vos créations précédentes sont conservées.');
       } catch (e) { toast(e.message, true); }
       setBusy('illus', false);
       render();

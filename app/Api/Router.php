@@ -294,6 +294,8 @@ final class Router
                 Http::ok([
                     'cover'            => $cover,
                     'els'              => Covers::frontElements($cover, $hasIllus),
+                    'els_back'         => Covers::backElements($cover),
+                    'library'          => CoverStudio::illusLibrary((int) $project['id']),
                     'fonts'            => CoverStudio::fonts(),
                     'motifs'           => CoverStudio::MOTIFS,
                     'geometry'         => $geometry,
@@ -337,7 +339,12 @@ final class Router
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 $hasIllus = is_file(CoverStudio::illusPath((int) $project['id']));
                 $illusPath = $hasIllus ? CoverStudio::illusPath((int) $project['id']) : null;
-                $variants = CoverStudio::variants((int) Http::in('seed', 1));
+                // Graine PROPRE AU LIVRE : deux projets différents ne reçoivent
+                // jamais les mêmes propositions, et « 8 nouvelles couvertures »
+                // ne modifie que le livre en cours.
+                $variants = CoverStudio::variants(
+                    (int) crc32('p' . (int) $project['id'] . '#' . max(1, (int) Http::in('seed', 1)))
+                );
                 $current = $cover['palette'];
                 Http::ok(['variants' => array_map(function ($v) use ($cover, $hasIllus, $illusPath, $current) {
                     $els = CoverStudio::layoutElements($v['layout'], $v['palette'], $v['motif'], $cover['texts'], $hasIllus);
@@ -373,8 +380,22 @@ final class Router
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
                 Covers::get($project, self::selectedConceptOrNull($project), $user);
-                $els = Covers::saveLayout((int) $project['id'], (array) Http::in('els', []));
-                Http::ok(['els' => $els]);
+                $face = Http::in('face') === 'back' ? 'back' : 'front';
+                $els = Covers::saveLayout((int) $project['id'], (array) Http::in('els', []), $face);
+                Http::ok(['els' => $els, 'face' => $face]);
+
+            case 'coverstudio/layout-reset':
+                // Repart de la 4ème composée automatiquement (annule les retouches)
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
+                if (Http::in('face') === 'back') {
+                    Db::run('UPDATE covers SET layout_back_json = NULL WHERE project_id = ?', [(int) $project['id']]);
+                    Http::ok(['els' => CoverStudio::backElements($cover['palette'], $cover['texts'])]);
+                }
+                Db::run('UPDATE covers SET layout_json = NULL WHERE project_id = ?', [(int) $project['id']]);
+                $fresh = Covers::get(self::project((int) $project['id'], $userId), null, $user);
+                Http::ok(['els' => Covers::frontElements($fresh, is_file(CoverStudio::illusPath((int) $project['id'])))]);
 
             case 'coverstudio/motif':
                 $type = in_array($_GET['type'] ?? '', CoverStudio::MOTIFS, true) ? (string) $_GET['type'] : 'blob';
@@ -401,7 +422,47 @@ final class Router
                 Covers::save((int) $project['id'], 'studio', $palette, array_merge($cover['texts'], ['illus_prompt' => $prompt]));
                 $freshCover = Covers::get(self::project((int) $project['id'], $userId), null, $user);
                 Covers::saveLayout((int) $project['id'], CoverStudio::layoutElements('affiche', $freshCover['palette'], (string) ($palette['motif'] ?? 'blob'), $freshCover['texts'], true));
-                Http::ok(['generated' => true, 'cover' => Covers::get(self::project((int) $project['id'], $userId), null, $user)]);
+                Http::ok([
+                    'generated' => true,
+                    'cover'     => Covers::get(self::project((int) $project['id'], $userId), null, $user),
+                    'library'   => CoverStudio::illusLibrary((int) $project['id']),
+                ]);
+
+            case 'coverstudio/illus-library':
+                // Bibliothèque des illustrations générées pour CE livre
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok(['library' => CoverStudio::illusLibrary((int) $project['id'])]);
+
+            case 'coverstudio/illus-select':
+                // Une création de la bibliothèque redevient l'illustration active
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $file = CoverStudio::illusItemPath((int) $project['id'], (string) Http::in('slug', ''));
+                if (!is_file($file)) {
+                    Http::error('Illustration introuvable dans la bibliothèque.');
+                }
+                @copy($file, CoverStudio::illusPath((int) $project['id']));
+                Http::ok(['library' => CoverStudio::illusLibrary((int) $project['id'])]);
+
+            case 'coverstudio/illus-delete':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $file = CoverStudio::illusItemPath((int) $project['id'], (string) Http::in('slug', ''));
+                if (is_file($file)) {
+                    $active = CoverStudio::illusPath((int) $project['id']);
+                    $wasActive = is_file($active) && md5_file($active) === md5_file($file);
+                    @unlink($file);
+                    // L'active supprimée : la plus récente restante prend le relais
+                    if ($wasActive) {
+                        $rest = CoverStudio::illusLibrary((int) $project['id']);
+                        if ($rest) {
+                            @copy(CoverStudio::illusItemPath((int) $project['id'], $rest[0]['slug']), $active);
+                        } else {
+                            @unlink($active);
+                        }
+                    }
+                }
+                Http::ok(['library' => CoverStudio::illusLibrary((int) $project['id'])]);
 
             case 'coverstudio/clear-illustration':
                 Http::requirePost();
@@ -450,7 +511,10 @@ final class Router
 
             case 'coverstudio/illus-file':
                 $project = self::project((int) Http::in('id'), $userId);
-                $file = CoverStudio::illusPath((int) $project['id']);
+                $item = trim((string) Http::in('item', ''));
+                $file = $item !== ''
+                    ? CoverStudio::illusItemPath((int) $project['id'], $item)
+                    : CoverStudio::illusPath((int) $project['id']);
                 if (!is_file($file)) {
                     http_response_code(404);
                     exit;
@@ -465,7 +529,7 @@ final class Router
                 @set_time_limit(120);
                 $project = self::project((int) Http::in('id'), $userId);
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
-                $jpeg = CoverStudio::jpegFromElements(CoverStudio::backElements($cover['palette'], $cover['texts']), null);
+                $jpeg = CoverStudio::jpegFromElements(Covers::backElements($cover), null);
                 header('Content-Type: image/jpeg');
                 header('Cache-Control: no-store');
                 header('Content-Length: ' . strlen($jpeg));
@@ -482,7 +546,7 @@ final class Router
                 $geometry = \App\Services\Layout::geometry($project);
                 $illus = CoverStudio::illusPath((int) $project['id']);
                 $frontEls = Covers::frontElements($cover, is_file($illus));
-                $backEls = CoverStudio::backElements($cover['palette'], $cover['texts']);
+                $backEls = Covers::backElements($cover);
                 $wrap = CoverStudio::wrapImage($frontEls, $backEls, $cover['palette'], $cover['texts'], $geometry, is_file($illus) ? $illus : null);
 
                 $exportDir = (string) Config::get('paths.exports');

@@ -34,8 +34,18 @@
     description: ['#data-print-book-description textarea', '#data-ebook-description textarea', '#cke_data-print-book-description iframe', 'div[id*="description"] div[contenteditable="true"]', 'textarea[id*="description"]'],
     keywords:    ['#data-print-book-keywords-{i}', '#data-ebook-keywords-{i}', 'input[id*="keywords-{i}"]'],
     price:       ['#data-pricing-print-fr-price-input input', '#data-pricing-print-fr-price-input', 'input[id*="price-input"][id*="fr"]', 'input[name*="fr"][name*="price"]'],
-    isbn:        ['#data-print-book-isbn', 'input[id*="isbn"]:not([id*="free"])']
+    isbn:        ['#data-print-book-isbn', 'input[id*="isbn"]:not([id*="free"])'],
+    // Option « ISBN gratuit attribué par KDP » : radio/bouton selon la version
+    // du formulaire — complétée par une recherche sur le libellé (voir chooseFreeIsbn).
+    isbn_free:   ['#free-isbn-radio', 'input[type="radio"][id*="free-isbn"]', 'input[type="radio"][id*="free_isbn"]',
+                  'input[type="radio"][value="FREE_ISBN"]', '#assign-isbn-button', 'button[id*="free-isbn"]']
   };
+
+  // Libellés possibles de l'option ISBN gratuit (FR / EN)
+  const FREE_ISBN_LABELS = [
+    'isbn gratuit', 'obtenir un isbn gratuit', 'attribuer un isbn kdp gratuit',
+    'free kdp isbn', 'assign me a free kdp isbn', 'get a free kdp isbn'
+  ];
 
   const state = {
     baseUrl: GM_getValue('tirage_base', ''),
@@ -123,6 +133,36 @@
     report.push([filled ? '✓' : '✗', 'keywords', filled + '/7 mots-clés remplis']);
   }
 
+  /**
+   * Sélectionne l'option « ISBN gratuit attribué par KDP » (choix par défaut).
+   * D'abord par sélecteur, sinon en repérant le libellé dans la page — Amazon
+   * fait évoluer le formulaire, cette double approche encaisse les changements.
+   */
+  function chooseFreeIsbn(report) {
+    const direct = findField(FIELD_SELECTORS.isbn_free);
+    if (direct) {
+      if (direct.type === 'radio' || direct.type === 'checkbox') {
+        if (!direct.checked) direct.click();
+      } else {
+        direct.click();
+      }
+      report.push(['✓', 'isbn', 'ISBN gratuit KDP sélectionné']);
+      return;
+    }
+    const candidates = document.querySelectorAll('label, button, span, div[role="radio"]');
+    for (const el of candidates) {
+      const text = (el.textContent || '').trim().toLowerCase();
+      if (!text || text.length > 90) continue;
+      if (!FREE_ISBN_LABELS.some(l => text.includes(l))) continue;
+      const input = el.querySelector('input[type="radio"], input[type="checkbox"]')
+        || (el.htmlFor ? document.getElementById(el.htmlFor) : null);
+      (input || el).click();
+      report.push(['✓', 'isbn', 'ISBN gratuit KDP sélectionné (via le libellé)']);
+      return;
+    }
+    report.push(['✗', 'isbn', 'option « ISBN gratuit KDP » absente de cette page — cochez-la vous-même']);
+  }
+
   function stripHtml(html) {
     const div = document.createElement('div');
     div.innerHTML = html.replace(/<\/(p|li|ul|br)>/gi, '\n').replace(/<li>/gi, '• ');
@@ -140,13 +180,15 @@
     fillField('description', p.description_html, report);
     fillKeywords(p.keywords, report);
     fillField('price', p.price_eur != null ? String(p.price_eur) : '', report);
-    fillField('isbn', p.isbn, report);
+    if (p.isbn_mode === 'own' && p.isbn) fillField('isbn', p.isbn, report);
+    else chooseFreeIsbn(report);
 
     const done = report.filter(r => r[0] === '✓').length;
     const reglages = '\nRéglages d’impression à sélectionner :' +
       '\n• Format : ' + (p.trim || '6x9').replace('x', ' × ') + ' po · ' + (p.pages || '?') + ' pages' +
       '\n• Fond perdu : ' + (p.bleed ? 'AVEC fond perdu (obligatoire)' : 'sans fond perdu') +
       '\n• Encre : ' + (p.ink === 'color' ? 'couleur' : 'noir & blanc') + ' · papier ' + (p.paper === 'white' ? 'blanc' : 'crème') +
+      '\n• ISBN : ' + (p.isbn_mode === 'own' ? ('le vôtre — ' + p.isbn) : 'gratuit attribué par KDP (option cochée)') +
       (p.categories && p.categories.length ? '\nCatégories à choisir : ' + p.categories.join(' | ') : '');
     setStatus(report.map(r => r.join(' ')).join('\n') + reglages +
       '\n— ' + done + ' champ(s) rempli(s). Vérifiez chaque valeur, les catégories se choisissent dans l’interface KDP, puis validez vous-même.', done === 0);

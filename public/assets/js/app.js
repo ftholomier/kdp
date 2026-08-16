@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-12 · c20';
+  const BUILD = '2026-08-13 · c21';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1714,7 +1714,7 @@
         <div class="row"><label>Catégories (3 max, une par ligne)<textarea id="kdp-cats" rows="3">${esc((meta.categories || []).join('\n'))}</textarea></label></div>
         <div class="grid2 row">
           <label>Prix broché (€)<input type="number" step="0.01" id="kdp-price" value="${meta.price != null ? meta.price : ''}"></label>
-          <label>ISBN (vide = attribué par KDP)<input type="text" id="kdp-isbn" value="${esc(meta.isbn)}"></label>
+          <label>ISBN <span class="faint" style="font-size:11px;">— laissez vide : ISBN gratuit KDP (par défaut)</span><input type="text" id="kdp-isbn" value="${esc(meta.isbn)}" placeholder="Gratuit attribué par Amazon"></label>
         </div>
         <div class="row"><label>ASIN une fois publié <span class="faint" style="font-size:11px;">(active le suivi de classement des mots-clés)</span><input type="text" id="kdp-asin" value="${esc(meta.asin || '')}" placeholder="B0XXXXXXXX"></label></div>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">

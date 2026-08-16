@@ -132,6 +132,9 @@ final class Kdp
             'categories'  => $meta['categories'],
             'price_eur'   => $meta['price'] ?? $summary['pricing']['price'],
             'isbn'        => $meta['isbn'],
+            // ISBN vide = on choisit le numéro GRATUIT proposé par KDP : le
+            // userscript sélectionne l'option correspondante dans le formulaire.
+            'isbn_mode'   => $meta['isbn'] !== '' ? 'own' : 'free_kdp',
             'trim'        => $project['trim_format'],
             'pages'       => $summary['geometry']['pages'],
             'ink'         => ($project['photo_style'] ?? 'nb') === 'couleur' ? 'color' : 'black_white',

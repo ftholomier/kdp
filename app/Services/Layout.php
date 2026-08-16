@@ -146,9 +146,11 @@ final class Layout
             ['state' => 'ok',
              'label' => 'Pages liminaires complètes',
              'note'  => 'Faux-titre, titre, copyright, sommaire générés'],
-            ['state' => ($meta && $meta['isbn'] !== '') ? 'ok' : 'warn',
-             'label' => ($meta && $meta['isbn'] !== '') ? 'ISBN renseigné' : 'Aucun ISBN saisi',
-             'note'  => ($meta && $meta['isbn'] !== '') ? $meta['isbn'] : 'KDP peut en attribuer un gratuitement'],
+            // Par défaut : ISBN GRATUIT attribué par KDP (choix systématique) —
+            // ce n'est donc pas une alerte, c'est la configuration normale.
+            ['state' => 'ok',
+             'label' => ($meta && $meta['isbn'] !== '') ? 'ISBN personnel renseigné' : 'ISBN gratuit KDP (par défaut)',
+             'note'  => ($meta && $meta['isbn'] !== '') ? $meta['isbn'] : 'Amazon attribue le numéro gratuitement — option présélectionnée'],
             ['state' => 'ok',
              'label' => 'Aucun élément hors zone de sécurité',
              'note'  => 'Marge de sécurité de 6,4 mm respectée'],

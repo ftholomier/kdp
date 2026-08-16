@@ -30,13 +30,15 @@ final class Docx
         $body .= '<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>';
 
         // Copyright
-        $body .= self::p($e('© ' . $book['year'] . ' ' . $book['author'] . '. Tous droits réservés.'), ['size' => 18]);
-        $body .= self::p($e('Publié en autoédition via Amazon Kindle Direct Publishing.'), ['size' => 18]);
+        // Libellés dans la langue du livre (voir Lang::labels()).
+        $t = fn (string $key): string => (string) (($book['labels'] ?? [])[$key] ?? \App\Services\Lang::labels('fr')[$key]);
+        $body .= self::p($e('© ' . $book['year'] . ' ' . $book['author'] . '. ' . $t('rights')), ['size' => 18]);
+        $body .= self::p($e($t('selfpub')), ['size' => 18]);
 
-        $calloutLabels = \App\Core\Util::CALLOUTS;
+        $calloutLabels = (array) ($book['callout_labels'] ?? \App\Services\Lang::labels('fr')['callouts']);
         foreach ($book['chapters'] as $chapter) {
             $body .= '<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>';
-            $body .= self::p($e($chapter['label'] ?? ('Chapitre ' . $chapter['num'])), ['size' => 20, 'caps' => true, 'color' => '888888']);
+            $body .= self::p($e($chapter['label'] ?? ($t('chapter') . ' ' . $chapter['num'])), ['size' => 20, 'caps' => true, 'color' => '888888']);
             $body .= self::p($e($chapter['title']), ['size' => 40, 'bold' => true, 'after' => 480, 'style' => 'Heading1']);
             foreach ($chapter['sections'] as $index => $section) {
                 if ($index > 0) {

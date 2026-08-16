@@ -418,6 +418,10 @@ final class Writer
         );
         $tail = $previous ? trim(mb_substr((string) $previous['content'], -$tailChars)) : '';
 
+        // LANGUE DU LIVRE : un livre déclaré anglais s'écrit en anglais.
+        $langCode = Lang::codeOf($project);
+        $langName = Lang::promptName($langCode);
+
         $bookTitle = $concept['title'] ?? $project['title'];
         $hook = $concept['hook'] ?? '';
         $promise = $concept['description'] ?? '';
@@ -455,10 +459,12 @@ final class Writer
             . "SECTION À RÉDIGER MAINTENANT : §{$section['num']} « {$section['title']} »\n"
             . ($tail !== '' ? "FIN DU TEXTE DÉJÀ ÉCRIT (pour la continuité, ne pas répéter) :\n« …{$tail} »\n" : '')
             . "\n" . $roleBrief
-            . "Rédige intégralement cette section en français.\n"
+            . "Rédige intégralement cette section en {$langName}, pour des lecteurs natifs.\n"
             . "Contraintes :\n"
             . "- environ {$targetWords} mots (±15 %) ;\n"
-            . "- ton : {$project['tone']}, tutoiement interdit, s'adresser au lecteur avec « vous » ;\n"
+            . "- ton : {$project['tone']}"
+            . ($langCode === 'fr' ? ", tutoiement interdit, s'adresser au lecteur avec « vous »" : ', vouvoiement de politesse si la langue le prévoit')
+            . " ;\n"
             . "- paragraphes de 3 à 6 phrases séparés par une ligne vide ; listes à puces « – » autorisées avec parcimonie ;\n"
             . $calloutRule
             . "- en dehors des encadrés ci-dessus : AUCUN titre, AUCUN markdown (pas de #, pas de **), aucune numérotation ;\n"
@@ -468,7 +474,7 @@ final class Writer
         return trim(Gemini::text($prompt, [
             'model'       => 'pro',
             'temperature' => (float) Config::get('gemini.temperature_writing', 0.8),
-            'system'      => "Tu es un auteur professionnel de livres pratiques en français. "
+            'system'      => "Tu es un auteur professionnel de livres pratiques, tu écris exclusivement en {$langName}. "
                 . "Tu écris un texte fluide, précis, sans remplissage, prêt à être imprimé.",
         ]));
     }
@@ -476,17 +482,18 @@ final class Writer
     /** Libellé lisible d'un chapitre (Introduction / Chapitre N / Conclusion). */
     private static function labelFor(int $projectId, string $role, int $num): string
     {
+        $labels = Lang::labels(Lang::codeOf(Db::one('SELECT * FROM projects WHERE id = ?', [$projectId]) ?: []));
         if ($role === 'intro') {
-            return 'Introduction';
+            return $labels['intro'];
         }
         if ($role === 'conclusion') {
-            return 'Conclusion';
+            return $labels['conclusion'];
         }
         $row = Db::one(
             "SELECT COUNT(*) AS n FROM chapters WHERE project_id = ? AND role = 'chapter' AND num < ?",
             [$projectId, $num]
         );
-        return 'Chapitre ' . ((int) ($row['n'] ?? 0) + 1);
+        return $labels['chapter'] . ' ' . ((int) ($row['n'] ?? 0) + 1);
     }
 
     private static function duplicateParagraphs(int $chapterId): int

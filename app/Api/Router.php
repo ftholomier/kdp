@@ -18,6 +18,7 @@ use App\Services\Covers;
 use App\Services\Docx;
 use App\Services\Gemini;
 use App\Services\Kdp;
+use App\Services\Lang;
 use App\Services\Layout;
 use App\Services\Market;
 use App\Services\PdfBook;
@@ -909,7 +910,24 @@ final class Router
 
             case 'kdpmeta/get':
                 $project = self::project((int) Http::in('id'), $userId);
-                Http::ok(['meta' => Kdp::meta((int) $project['id'])]);
+                Http::ok([
+                    'meta' => Kdp::meta((int) $project['id']),
+                    // Langue effective du livre : elle gouverne les métadonnées
+                    // Amazon ET les libellés composés dans le PDF/ePub.
+                    'lang' => Lang::of($project),
+                    'langs' => array_map(
+                        fn ($code, $l) => ['code' => $code, 'name' => $l['fr'], 'native' => $l['native'], 'store' => $l['marketplace']],
+                        array_keys(Lang::LANGS), Lang::LANGS
+                    ),
+                ]);
+
+            case 'projects/lang':
+                // Correction manuelle de la langue : le livre entier suit
+                // (métadonnées, 4e de couverture, sommaire, encadrés, pages de fin).
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $code = Lang::set((int) $project['id'], (string) Http::in('lang', ''));
+                Http::ok(['lang' => ['code' => $code] + Lang::LANGS[$code]]);
 
             case 'kdpmeta/generate':
                 Http::requirePost();

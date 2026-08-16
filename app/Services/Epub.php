@@ -82,11 +82,13 @@ final class Epub
         // ── Chapitres ──
         $uploads = (string) Config::get('paths.uploads');
         $navEntries = [];
-        $labels = Util::CALLOUTS;
+        // Libellés dans la langue du livre (voir Lang::labels()).
+        $t = fn (string $key): string => (string) (($book['labels'] ?? [])[$key] ?? Lang::labels('fr')[$key]);
+        $labels = (array) ($book['callout_labels'] ?? Lang::labels('fr')['callouts']);
         foreach ($book['chapters'] as $ci => $chapter) {
             $id = 'chap' . ($ci + 1);
             $html = '<h1 class="chap">'
-                . '<span class="kicker">' . $e(mb_strtoupper((string) ($chapter['label'] ?? 'Chapitre'))) . '</span>'
+                . '<span class="kicker">' . $e(mb_strtoupper((string) ($chapter['label'] ?? $t('chapter')))) . '</span>'
                 . $e($chapter['title']) . '</h1>';
 
             $imagesDone = false;
@@ -145,21 +147,21 @@ final class Epub
 
         // ── Pages de fin qui vendent ──
         $endPages = [];
-        $endPages[] = ['avis', 'Votre avis compte',
-            '<p>Vous voici à la fin de ce livre — merci de l\'avoir lu jusqu\'ici. Si les pages qui précèdent vous ont apporté des repères, des idées ou l\'envie de passer à l\'action, vous pouvez rendre un immense service à son auteur indépendant : <b>laisser un avis sur Amazon</b>.</p>'
-            . '<p>Quelques lignes suffisent. Les avis sont le principal signal qui permet à un livre autoédité d\'être découvert par d\'autres lecteurs : chacun compte réellement.</p>'
-            . '<p>Rendez-vous sur la page Amazon du livre (rubrique « Donner un avis ») — et merci d\'avance.</p>'];
+        $endPages[] = ['avis', $t('review_title'),
+            '<p>' . $e($t('review_1')) . '</p>'
+            . '<p>' . $e($t('review_2')) . '</p>'
+            . '<p>' . $e($t('review_3')) . '</p>'];
         if (!empty($book['other_books'])) {
             $listing = '';
             foreach ($book['other_books'] as $other) {
                 $listing .= '<p class="autre-livre"><b>' . $e((string) $other['title']) . '</b>'
                     . (!empty($other['subtitle']) ? '<br/><i>' . $e((string) $other['subtitle']) . '</i>' : '') . '</p>';
             }
-            $endPages[] = ['autres', 'Du même auteur',
-                '<p>Si ce livre vous a plu, d\'autres titres du même auteur pourraient vous accompagner :</p>' . $listing];
+            $endPages[] = ['autres', $t('same_author'),
+                '<p>' . $e($t('same_author_intro')) . '</p>' . $listing];
         }
         if (!empty($book['bio'])) {
-            $endPages[] = ['auteur', 'À propos de ' . $book['author'], '<p>' . $e((string) $book['bio']) . '</p>'];
+            $endPages[] = ['auteur', $t('about') . ' ' . $book['author'], '<p>' . $e((string) $book['bio']) . '</p>'];
         }
         foreach ($endPages as [$slug, $title, $content]) {
             $zip->addFromString('OEBPS/fin-' . $slug . '.xhtml', self::page($title,
@@ -170,8 +172,8 @@ final class Epub
         }
 
         // ── Sommaire navigable ──
-        $zip->addFromString('OEBPS/nav.xhtml', self::page('Sommaire',
-            '<nav epub:type="toc" id="toc"><h1>Sommaire</h1><ol>' . implode('', $navEntries) . '</ol></nav>', true));
+        $zip->addFromString('OEBPS/nav.xhtml', self::page($t('toc'),
+            '<nav epub:type="toc" id="toc"><h1>' . $e($t('toc')) . '</h1><ol>' . implode('', $navEntries) . '</ol></nav>', true));
         $manifest[] = '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>';
         array_splice($spine, $hasCover ? 2 : 1, 0, ['<itemref idref="nav"/>']);
 

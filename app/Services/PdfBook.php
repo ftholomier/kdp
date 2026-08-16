@@ -249,6 +249,24 @@ final class PdfComposer
         return (bool) ($this->opts[$key] ?? true);
     }
 
+    /**
+     * Libellé composé par le studio, dans la LANGUE DU LIVRE : sommaire,
+     * copyright, encadrés et pages de fin sont fournis tout traduits par
+     * Layout::bookData() (voir Lang::labels()).
+     */
+    private function t(string $key): string
+    {
+        $labels = (array) ($this->book['labels'] ?? []);
+        return (string) ($labels[$key] ?? Lang::labels('fr')[$key] ?? $key);
+    }
+
+    /** Étiquettes des encadrés éditoriaux, dans la langue du livre. */
+    private function calloutLabels(): array
+    {
+        $labels = (array) ($this->book['callout_labels'] ?? []);
+        return $labels ?: Lang::labels('fr')['callouts'];
+    }
+
     /** Police titres/numéros du moteur premium (Poppins ou Montserrat). */
     private function sansFont(): string
     {
@@ -346,9 +364,9 @@ final class PdfComposer
         // p.4 — copyright
         $this->newPage('blank');
         $lines = [
-            '© ' . $this->book['year'] . ' ' . $this->book['author'] . '. Tous droits réservés.',
-            'Aucune partie de ce livre ne peut être reproduite sans autorisation écrite.',
-            'Publié en autoédition via Amazon Kindle Direct Publishing.',
+            '© ' . $this->book['year'] . ' ' . $this->book['author'] . '. ' . $this->t('rights'),
+            $this->t('no_repro'),
+            $this->t('selfpub'),
         ];
         $y = $this->h - $this->bottom - 58;
         foreach ($lines as $line) {
@@ -358,7 +376,7 @@ final class PdfComposer
 
         // p.5+ — sommaire avec points de conduite
         $this->newPage('blank');
-        $center($this->top + 42, $this->titleFont, 20, 'Sommaire');
+        $center($this->top + 42, $this->titleFont, 20, $this->t('toc'));
         if ($this->opener === 'editorial' || $this->opener === 'centered') {
             $this->pdf->rectRgb(($this->w - 36) / 2, $this->top + 54, 36, 1.4, $this->accent);
         } elseif ($this->opener === 'premium') {
@@ -539,23 +557,20 @@ final class PdfComposer
             }
         };
 
-        $page('Un dernier mot', 'Votre avis compte', [
-            'Vous voici à la fin de ce livre — merci de l\'avoir lu jusqu\'ici. Si les pages qui précèdent vous ont apporté '
-            . 'des repères, des idées ou l\'envie de passer à l\'action, vous pouvez rendre un immense service à son auteur '
-            . 'indépendant : laisser un avis sur Amazon.',
-            'Quelques lignes suffisent. Les avis sont le principal signal qui permet à un livre autoédité d\'être découvert '
-            . 'par d\'autres lecteurs : chacun compte réellement.',
-            'Rendez-vous sur la page Amazon du livre (rubrique « Donner un avis ») — et merci d\'avance.',
+        $page($this->t('last_word'), $this->t('review_title'), [
+            $this->t('review_1'),
+            $this->t('review_2'),
+            $this->t('review_3'),
         ]);
 
         if (!empty($this->book['other_books'])) {
-            $page('Pour aller plus loin', 'Du même auteur', [
-                'Si ce livre vous a plu, d\'autres titres du même auteur pourraient vous accompagner :',
+            $page($this->t('further'), $this->t('same_author'), [
+                $this->t('same_author_intro'),
             ], $this->book['other_books']);
         }
 
         if (!empty($this->book['bio'])) {
-            $page('L\'auteur', 'À propos de ' . $this->book['author'], [$this->book['bio']]);
+            $page($this->t('author'), $this->t('about') . ' ' . $this->book['author'], [$this->book['bio']]);
         }
     }
 
@@ -728,7 +743,7 @@ final class PdfComposer
     {
         $left = $this->marginLeft();
         $width = $this->textWidth();
-        $label = mb_strtoupper((string) ($chapter['label'] ?? 'Chapitre'));
+        $label = mb_strtoupper((string) ($chapter['label'] ?? $this->t('chapter')));
         $isChapter = ($chapter['role'] ?? 'chapter') === 'chapter';
         $displayNum = (string) ($chapter['display_num'] ?? '');
 
@@ -1065,7 +1080,7 @@ final class PdfComposer
      */
     private function premiumBand(float $y, string $kind, string $text): float
     {
-        $labels = \App\Core\Util::CALLOUTS;
+        $labels = $this->calloutLabels();
         $label = mb_strtoupper($labels[$kind] ?? $kind);
         $soft = $this->opener === 'premium2';
         $left = $this->marginLeft();
@@ -1209,7 +1224,7 @@ final class PdfComposer
     /** Encadré éditorial : boîte teintée accent, étiquette, texte sans-serif. */
     private function callout(float $y, string $kind, string $text): float
     {
-        $labels = \App\Core\Util::CALLOUTS;
+        $labels = $this->calloutLabels();
         $label = mb_strtoupper($labels[$kind] ?? $kind);
         $premium = $this->isPremium();
         // Encarts décochés dans le composeur : simple paragraphe étiquette

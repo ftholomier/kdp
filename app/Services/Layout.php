@@ -201,6 +201,10 @@ final class Layout
     {
         \App\Core\Migrations::run();
         $projectId = (int) $project['id'];
+        // LANGUE DU LIVRE : tous les libellés composés par le studio (sommaire,
+        // « Chapitre 2 », copyright, encadrés, pages de fin) en découlent.
+        $langCode = Lang::codeOf($project);
+        $labels = Lang::labels($langCode);
         $chapters = Db::all('SELECT * FROM chapters WHERE project_id = ? ORDER BY num', [$projectId]);
         $out = [];
         $chapterIndex = 0;
@@ -222,9 +226,9 @@ final class Layout
                 'role'        => $role,
                 'display_num' => $role === 'chapter' ? $chapterIndex : 0,
                 'label'       => match ($role) {
-                    'intro'      => 'Introduction',
-                    'conclusion' => 'Conclusion',
-                    default      => 'Chapitre ' . $chapterIndex,
+                    'intro'      => $labels['intro'],
+                    'conclusion' => $labels['conclusion'],
+                    default      => $labels['chapter'] . ' ' . $chapterIndex,
                 },
                 'title'    => $chapter['title'],
                 'sections' => array_map(fn ($s) => [
@@ -256,7 +260,9 @@ final class Layout
             'other_books' => $otherBooks,
             'chapters' => $out,
             'year'     => date('Y'),
-            'callout_labels' => Util::CALLOUTS,
+            'lang'     => $langCode,
+            'labels'   => $labels,
+            'callout_labels' => $labels['callouts'],
         ];
     }
 }

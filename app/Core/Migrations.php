@@ -28,6 +28,9 @@ final class Migrations
         self::ensureColumn('kdp_meta', 'aplus_json', 'MEDIUMTEXT NULL');
         self::ensureColumn('projects', 'translate_from', 'INT UNSIGNED NULL');
         self::ensureColumn('projects', 'translate_lang', 'VARCHAR(30) NULL');
+        // Langue du livre : gouverne les métadonnées Amazon ET les libellés
+        // composés dans le PDF/ePub (sommaire, encadrés, pages de fin).
+        self::ensureColumn('projects', 'lang', "VARCHAR(5) NULL AFTER tone");
     }
 
     private static function ensureColumn(string $table, string $column, string $definition): void

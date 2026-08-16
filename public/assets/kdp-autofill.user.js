@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tirage — Remplissage auto du formulaire Amazon KDP
 // @namespace    tirage-kdp-studio
-// @version      2.0.0
-// @description  Remplit tout seul le formulaire de publication Amazon KDP (titre, sous-titre, auteur, description, mots-clés, ISBN gratuit, format, fond perdu, papier, finition, prix) depuis vos projets Tirage. Vous choisissez le projet une fois, le reste se remplit page après page. Le clic final « Publier » reste manuel.
+// @version      2.1.0
+// @description  Remplit tout seul le formulaire de publication Amazon KDP (langue, titre, sous-titre, auteur, description, mots-clés, ISBN gratuit, format, fond perdu, papier, finition, prix) depuis vos projets Tirage. Vous choisissez le projet une fois, le reste se remplit page après page. Le clic final « Publier » reste manuel.
 // @match        https://kdp.amazon.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -37,7 +37,11 @@
     author_last: ['#data-print-book-primary-author-last-name', '#data-ebook-primary-author-last-name', 'input[id*="primary-author-last"]'],
     description: ['#data-print-book-description textarea', '#data-ebook-description textarea', '#cke_data-print-book-description iframe',
                   'div[id*="description"] div[contenteditable="true"]', 'textarea[id*="description"]'],
-    isbn:        ['#data-print-book-isbn', 'input[id*="isbn"]:not([id*="free"])']
+    isbn:        ['#data-print-book-isbn', 'input[id*="isbn"]:not([id*="free"])'],
+    // Langue du livre : select selon les versions du formulaire, sinon champ
+    // texte à autocomplétion.
+    language:    ['#data-print-book-language', '#data-ebook-language', 'select[id*="language"]',
+                  'input[id*="language"]', 'select[name*="language"]']
   };
 
   // ── Choix fermés (radios / boutons) : sélecteurs + libellés FR & EN ────────
@@ -239,6 +243,38 @@
     note(key, '✓', name(key) + ' — rempli');
   }
 
+  /**
+   * LANGUE DU LIVRE. Un livre anglais doit être déclaré « English » sur KDP :
+   * c'est ce qui conditionne les boutiques, les catégories proposées et la
+   * recherche Amazon. Le studio l'envoie dans le payload (language / native).
+   */
+  function fillLanguage(payload) {
+    if (state.filledKeys.language) return;
+    const wanted = [payload.language, payload.language_native].filter(Boolean);
+    if (!wanted.length) return;
+    const el = findField(FIELD_SELECTORS.language);
+    if (!el) return;
+
+    if (el.tagName === 'SELECT') {
+      const option = Array.from(el.options).find(o =>
+        wanted.some(w => wordMatch((o.textContent || '').trim().toLowerCase(), String(w).toLowerCase())
+          || String(o.value).toLowerCase() === String(w).toLowerCase()));
+      if (!option) return;
+      if (el.value === option.value) { note('language', '=', 'Langue — déjà sur ' + option.textContent.trim()); return; }
+      el.value = option.value;
+      ['input', 'change'].forEach(type => el.dispatchEvent(new Event(type, { bubbles: true })));
+      note('language', '✓', 'Langue : ' + option.textContent.trim());
+      return;
+    }
+    if (hasValue(el)) { note('language', '=', 'Langue — déjà renseignée, laissée telle quelle'); return; }
+    setNativeValue(el, payload.language);
+    // Champ à autocomplétion : la frappe simulée ouvre la liste, on valide la
+    // première proposition si elle correspond.
+    el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: payload.language.slice(-1) }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: payload.language.slice(-1) }));
+    note('language', '✓', 'Langue : ' + payload.language);
+  }
+
   /** Les 7 champs de mots-clés, repérés par ID puis à défaut en ordre DOM. */
   function fillKeywords(keywords) {
     const list = (keywords || []).filter(k => k && String(k).trim() !== '');
@@ -415,6 +451,7 @@
     const p = state.payload;
     if (!p) return;
 
+    fillLanguage(p);
     fillField('title', p.title);
     fillField('subtitle', p.subtitle);
     fillField('author_first', p.author && p.author.first_name);
@@ -635,7 +672,8 @@
     if (!seen('prices')) rest.push('• Prix : rempli dès que vous arriverez sur « Tarification »');
     if (!seen('isbn_free') && !seen('isbn')) rest.push('• ISBN gratuit : coché dès que vous arriverez sur « Contenu »');
     if (p.categories && p.categories.length) rest.push('• Catégories : à choisir dans la fenêtre KDP (rappel ci-dessous)');
-    const tail = '\nRappel impression : ' + (p.trim || '6x9').replace('x', ' × ') + ' po · ' + (p.pages || '?') + ' pages · '
+    const tail = '\nLangue : ' + (p.language || '?') + ' · boutique de référence ' + (p.marketplace || '?')
+      + '\nRappel impression : ' + (p.trim || '6x9').replace('x', ' × ') + ' po · ' + (p.pages || '?') + ' pages · '
       + (p.bleed ? 'AVEC fond perdu' : 'sans fond perdu') + ' · '
       + (p.ink === 'color' ? 'couleur' : 'noir & blanc') + ' papier ' + (p.paper === 'cream' ? 'crème' : 'blanc') + ' · finition '
       + (p.cover_finish === 'glossy' ? 'brillante' : 'mate');

@@ -201,13 +201,18 @@ final class Covers
     /** Texte de 4ème de couverture + accroche + bio générés par Gemini. */
     public static function generateBack(array $project, array $concept, array $user): array
     {
-        $prompt = "Tu es copywriter éditorial. Rédige les textes de couverture d'un livre pratique français "
-            . "destiné à Amazon KDP.\n"
+        // Les textes de couverture suivent la LANGUE DU LIVRE : une 4e de
+        // couverture française sur un livre anglais ne se vend pas.
+        $langName = Lang::promptName(Lang::codeOf($project));
+
+        $prompt = "Tu es copywriter éditorial. Rédige les textes de couverture d'un livre pratique rédigé "
+            . "en {$langName}, destiné à Amazon KDP.\n"
             . "Titre : « {$concept['title']} »\nAccroche existante : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\nTon : {$project['tone']}.\n\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
             . '{"tagline":"...","back_text":"...","bio":"..."}' . "\n"
             . "Contraintes :\n"
+            . "- tous les textes sont rédigés EN {$langName}, la langue du livre ;\n"
             . "- \"tagline\" : accroche de 1ère de couverture, une phrase percutante (max 80 caractères) ;\n"
             . "- \"back_text\" : 4ème de couverture, 3 courts paragraphes séparés par \\n\\n : le problème vécu "
             . "par le lecteur, la promesse du livre, ce qu'il contient concrètement (3 puces « • » possibles). "
@@ -218,7 +223,7 @@ final class Covers
             'model'       => 'fast',
             'temperature' => 0.9,
             'search'      => false,
-            'system'      => 'Tu écris des textes de couverture qui vendent, en français impeccable.',
+            'system'      => "Tu écris des textes de couverture qui vendent, dans un {$langName} impeccable.",
         ]);
 
         return [

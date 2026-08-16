@@ -183,6 +183,26 @@ boucle d'écriture (compatible mutualisé : aucun processus long côté serveur)
 > L'automatisation de saisie dans votre propre navigateur relève de votre responsabilité
 > vis-à-vis des conditions d'utilisation d'Amazon.
 
+## Langue du livre
+
+Un livre a **une** langue, et tout le studio la suit — métadonnées Amazon (sous-titre,
+description, 7 mots-clés, catégories), textes de 4ᵉ de couverture, contenu A+, rédaction
+des sections, **et** les libellés composés dans le livre lui-même : sommaire, « Chapitre 2 »,
+mention de copyright, étiquettes des encadrés, pages de fin. Langues gérées : français,
+anglais, allemand, espagnol, italien, portugais, néerlandais (`App\Services\Lang`).
+
+Elle est déduite toute seule, dans cet ordre :
+
+1. le choix enregistré sur le livre ;
+2. la langue cible si le livre est une **traduction** (étape « 🌍 Traduire ») ;
+3. la **détection automatique** sur le texte du livre (titre, couverture, premières sections) ;
+4. la langue par défaut du studio (`config.php → kdp.language`).
+
+Le résultat est mémorisé sur le projet, et corrigeable à tout moment dans **étape 07 →
+Publier sur Amazon KDP → Langue du livre**. La boutique de référence suit (Amazon.com pour
+l'anglais, Amazon.de pour l'allemand…) : c'est elle qui oriente les mots-clés, les catégories
+et le champ « Language » rempli dans le formulaire KDP.
+
 ## Exports
 
 - **PDF intérieur « qualité studio »** : `print.php` compose le livre page à page

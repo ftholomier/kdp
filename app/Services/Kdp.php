@@ -74,24 +74,34 @@ final class Kdp
     /** Génère les métadonnées vendeuses via Gemini. */
     public static function generate(array $project, array $concept, array $user): array
     {
-        $prompt = "Tu es expert du référencement Amazon KDP France. Prépare les métadonnées de publication "
-            . "d'un livre broché français.\n"
+        // LANGUE DU LIVRE : un livre anglais reçoit une fiche produit anglaise
+        // (sous-titre, description, mots-clés et catégories de sa boutique).
+        $lang = Lang::of($project);
+        $langName = Lang::promptName($lang['code']);
+        $store = $lang['marketplace'];
+
+        $prompt = "Tu es expert du référencement Amazon KDP sur {$store}. Prépare les métadonnées de publication "
+            . "d'un livre broché rédigé en {$langName}.\n"
             . "Titre : « {$concept['title']} »\nAccroche : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\nPrix envisagé : {$concept['price']}.\n\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
             . '{"subtitle":"...","description_html":"...","keywords":["k1","k2","k3","k4","k5","k6","k7"],'
             . '"categories":["...","...","..."],"price":14.90}' . "\n"
             . "Contraintes :\n"
+            . "- TOUTES les valeurs textuelles sont rédigées EN {$langName} — c'est la langue du livre "
+            . "et celle des lecteurs de {$store} ; aucune autre langue, aucune traduction entre parenthèses ;\n"
             . "- \"subtitle\" : sous-titre riche en mots-clés (max 120 caractères) ;\n"
             . "- \"description_html\" : description Amazon de 120-180 mots, HTML limité à <p>, <b>, <i>, <ul>, <li>, <br> ; "
             . "ouvre sur le problème du lecteur, promesse claire, 3-5 puces de bénéfices, appel à l'action final ;\n"
-            . "- \"keywords\" : exactement 7 expressions de recherche Amazon.fr (2-4 mots, sans répéter le titre) ;\n"
-            . "- \"categories\" : 3 chemins de catégories KDP plausibles, format \"Rayon > Sous-rayon > Niche\" ;\n"
-            . "- \"price\" : prix broché en euros (nombre).";
+            . "- \"keywords\" : exactement 7 expressions de recherche telles que les tapent les acheteurs de {$store} "
+            . "(2-4 mots, sans répéter le titre) ;\n"
+            . "- \"categories\" : 3 chemins de catégories KDP plausibles TELS QU'ILS S'INTITULENT sur {$store}, "
+            . "format \"Rayon > Sous-rayon > Niche\" ;\n"
+            . "- \"price\" : prix broché en euros (nombre) — le studio le convertit ensuite pour chaque boutique.";
 
         $data = Gemini::json($prompt, [
             'model' => 'fast', 'temperature' => 0.8, 'search' => false,
-            'system' => 'Tu optimises des fiches produit Amazon KDP en français.',
+            'system' => "Tu optimises des fiches produit Amazon KDP. Tu écris exclusivement en {$langName}.",
         ]);
 
         $name = trim((string) ($user['display_name'] ?? ''));
@@ -123,10 +133,16 @@ final class Kdp
             'last_name'  => $meta['author_last'] ?: (explode(' ', (string) ($texts['author'] ?? ''), 2)[1] ?? ''),
         ];
 
+        // Langue réelle du livre : c'est elle qui est saisie dans le formulaire
+        // KDP, pas la langue par défaut du studio.
+        $lang = Lang::of($project);
+
         return [
             'project_id'  => $projectId,
-            'language'    => Config::get('kdp.language', 'Français'),
-            'marketplace' => Config::get('kdp.marketplace', 'Amazon.fr'),
+            'language'    => $lang['kdp'],          // libellé du formulaire KDP (« English »)
+            'language_native' => $lang['native'],   // libellé localisé (« English », « Français »…)
+            'language_code'   => $lang['code'],
+            'marketplace' => $lang['marketplace'],
             'title'       => $texts['title'] ?? ($concept['title'] ?? $project['title']),
             'subtitle'    => $meta['subtitle'],
             'series'      => '',
@@ -203,16 +219,20 @@ final class Kdp
         $texts = $cover ? (json_decode((string) $cover['texts'], true) ?: []) : [];
         $title = (string) ($texts['title'] ?? ($concept['title'] ?? $project['title']));
 
+        $lang = Lang::of($project);
+        $langName = Lang::promptName($lang['code']);
+
         $data = Gemini::json(
             "Tu es expert du contenu A+ Amazon (les modules visuels sous la description produit). "
-            . "Prépare les TEXTES du contenu A+ d'un livre pratique français.\n"
+            . "Prépare les TEXTES du contenu A+ d'un livre pratique rédigé en {$langName}.\n"
             . "Titre : « {$title} »\nSous-titre : « {$meta['subtitle']} »\n"
             . "Description existante : " . strip_tags((string) $meta['description_html']) . "\n\n"
+            . "Tous les textes produits sont EN {$langName}, la langue du livre et de ses lecteurs.\n"
             . 'Réponds UNIQUEMENT en JSON : {"headline":"accroche 6-10 mots","subheadline":"promesse 12-18 mots",'
             . '"benefits":[{"title":"bénéfice 3-5 mots","text":"2 phrases concrètes"},{"title":"…","text":"…"},{"title":"…","text":"…"}],'
             . '"about":"paragraphe « pourquoi ce livre » de 50-70 mots"}',
             ['model' => 'fast', 'temperature' => 0.8, 'timeout' => 45, 'retries' => 1,
-             'system' => 'Tu écris des fiches produit Amazon qui convertissent, en français.']
+             'system' => "Tu écris des fiches produit Amazon qui convertissent. Tu écris exclusivement en {$langName}."]
         );
         $aplus = [
             'headline'    => mb_substr(trim((string) ($data['headline'] ?? $title)), 0, 120),

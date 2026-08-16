@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-16 · c24';
+  const BUILD = '2026-08-16 · c25';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1263,7 +1263,7 @@
         </div>
       </div>
     </div>
-    ${S.modal || ''}`;
+    `;
   }
 
   function figuresView(data) {
@@ -1420,7 +1420,7 @@
         </div>`}
       </div>
     </div>
-    ${S.modal || ''}`;
+    `;
   }
 
   async function loadLayout() {
@@ -1872,6 +1872,30 @@
 
   function closeModal() { S.modal = null; render(); }
 
+  /**
+   * Langue du livre : elle commande la langue des métadonnées Amazon (titre,
+   * description, mots-clés, catégories) ET des libellés composés dans le livre
+   * (sommaire, encadrés, pages de fin). Déduite automatiquement — traduction,
+   * sinon détection sur le texte — et corrigeable ici.
+   */
+  function langRowView() {
+    const lang = S.kdpLang;
+    if (!lang) return '';
+    const langs = S.kdpLangs || [];
+    return `
+      <div class="row lang-row">
+        <label>Langue du livre
+          <select id="kdp-lang" onchange="App.setBookLang(this.value)">
+            ${langs.map(l => `<option value="${esc(l.code)}" ${l.code === lang.code ? 'selected' : ''}>${esc(l.name)}${l.native !== l.name ? ' · ' + esc(l.native) : ''}</option>`).join('')}
+          </select>
+        </label>
+        <div class="faint" style="font-size:11.5px; margin-top:6px;">
+          Métadonnées, mots-clés et catégories sont rédigés dans cette langue, sur ${esc(lang.marketplace)} —
+          tout comme le sommaire, les encadrés et les pages de fin du livre.
+        </div>
+      </div>`;
+  }
+
   function publishModalView(meta, tokens) {
     const kw = Array.from({ length: 7 }, (_, i) => (meta.keywords || [])[i] || '');
     return `
@@ -1880,6 +1904,7 @@
         <h2>Publier sur Amazon KDP</h2>
         <div class="sub">Métadonnées du formulaire KDP + remplissage automatique par userscript. Vous gardez le contrôle : le script remplit les champs dans votre navigateur connecté à KDP, le clic final « Publier » reste le vôtre.</div>
 
+        ${langRowView()}
         <div class="row"><label>Sous-titre<input type="text" id="kdp-subtitle" value="${esc(meta.subtitle)}"></label></div>
         <div class="grid2 row">
           <label>Prénom auteur<input type="text" id="kdp-first" value="${esc(meta.author_first)}"></label>
@@ -2735,7 +2760,20 @@
           Api.get('tokens/list')
         ]);
         S.kdpMeta = metaData.meta;
+        S.kdpLang = metaData.lang || null;      // langue effective du livre
+        S.kdpLangs = metaData.langs || [];      // langues gérées par KDP
         S.tokens = tokenData.tokens;
+        S.modal = publishModalView(S.kdpMeta, S.tokens);
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    /** Correction manuelle de la langue du livre (fenêtre Publier). */
+    async setBookLang(code) {
+      try {
+        const data = await Api.post('projects/lang', { id: S.project.id, lang: code });
+        S.kdpLang = data.lang;
+        toast('Langue du livre : ' + data.lang.fr + ' — métadonnées et libellés du livre suivront.');
         S.modal = publishModalView(S.kdpMeta, S.tokens);
         render();
       } catch (e) { toast(e.message, true); }

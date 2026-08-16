@@ -1619,6 +1619,8 @@ final class MiniPdf
     private array $images = [];   // name => [data, w, h, colorspace]
     /** @var array<string,array{ttf:TtfFont,id:string}> polices TTF incorporées */
     private array $ttf = [];
+    /** @var array<string,array<int,int>> caractères utilisés par police : gid => codepoint */
+    private array $usedGlyphs = [];
     private int $fontCounter = 0;
 
     public function __construct(private float $w, private float $h)
@@ -1679,7 +1681,9 @@ final class MiniPdf
         }
         $pages = $this->pages;
         $this->pages = [];
-        return ['pages' => $pages, 'images' => $this->images];
+        // Les glyphes utilisés voyagent avec les pages : sans eux, la table
+        // /ToUnicode du document final serait amputée du corps du livre.
+        return ['pages' => $pages, 'images' => $this->images, 'glyphs' => $this->usedGlyphs];
     }
 
     public function appendPages(array $detached): void
@@ -1690,6 +1694,11 @@ final class MiniPdf
         }
         foreach ($detached['images'] as $name => $image) {
             $this->images[$name] = $image;
+        }
+        foreach ((array) ($detached['glyphs'] ?? []) as $font => $glyphs) {
+            foreach ($glyphs as $gid => $cp) {
+                $this->usedGlyphs[$font][$gid] = $cp;
+            }
         }
         foreach ($detached['pages'] as $content) {
             $this->pages[] = $content;
@@ -1712,6 +1721,7 @@ final class MiniPdf
         if (isset($this->ttf[$font])) {
             // Police incorporée : texte encodé en identifiants de glyphes (Identity-H)
             $hex = $this->ttf[$font]['ttf']->gidHex($str);
+            $this->trackGlyphs($font, $str);
             // L'espacement mot (Tw) est inopérant en Identity-H : simulé via TJ
             if ($wordSpacing > 0.01) {
                 $spaceHex = $this->ttf[$font]['ttf']->gidHex(' ');
@@ -1757,6 +1767,54 @@ final class MiniPdf
             "BT %s/%s %.2F Tf %.3F Tc 0 -1 1 0 %.2F %.2F Tm <%s> Tj ET %s\n",
             $color, $this->ttf[$font]['id'], $size, $charSpacing, $x, $yPdf, $hex, $rgb ? '0 0 0 rg' : ''
         );
+    }
+
+    /**
+     * Mémorise la correspondance glyphe → caractère pour la table /ToUnicode :
+     * c'est elle qui rend le PDF cherchable, copiable et ré-importable.
+     */
+    private function trackGlyphs(string $font, string $str): void
+    {
+        $ttf = $this->ttf[$font]['ttf'];
+        $len = mb_strlen($str);
+        for ($i = 0; $i < $len; $i++) {
+            $char = mb_substr($str, $i, 1);
+            $cp = mb_ord($char, 'UTF-8');
+            if ($cp === false) {
+                continue;
+            }
+            $gid = (int) hexdec($ttf->gidHex($char));
+            if ($gid > 0) {
+                $this->usedGlyphs[$font][$gid] = $cp;
+            }
+        }
+    }
+
+    /** Table /ToUnicode (CMap) d'une police, d'après les glyphes réellement posés. */
+    private function toUnicodeCMap(string $font): string
+    {
+        $map = $this->usedGlyphs[$font] ?? [];
+        ksort($map);
+        $entries = '';
+        $count = 0;
+        $blocks = '';
+        foreach ($map as $gid => $cp) {
+            $entries .= sprintf("<%04X> <%04X>\n", $gid, $cp);
+            $count++;
+            if ($count % 100 === 0) {
+                $blocks .= "100 beginbfchar\n" . $entries . "endbfchar\n";
+                $entries = '';
+            }
+        }
+        if ($entries !== '') {
+            $blocks .= ($count % 100) . " beginbfchar\n" . $entries . "endbfchar\n";
+        }
+        return "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+            . "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
+            . "/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n"
+            . "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+            . $blocks
+            . "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend";
     }
 
     public function rect(float $x, float $y, float $w, float $h, float $gray): void
@@ -1889,8 +1947,16 @@ final class MiniPdf
                 . ' /FontDescriptor ' . $descNum . ' 0 R /DW 500 /W [0 [' . implode(' ', $widths) . ']]'
                 . ' /CIDToGIDMap /Identity >>');
 
+            // /ToUnicode : le texte du PDF reste cherchable et copiable
+            $alias = array_search($entry, $this->ttf, true);
+            $cmap = $this->toUnicodeCMap((string) $alias);
+            $cmapStream = function_exists('gzcompress') ? gzcompress($cmap) : $cmap;
+            $cmapFilter = function_exists('gzcompress') ? ' /Filter /FlateDecode' : '';
+            $toUni = $add('<< /Length ' . strlen($cmapStream) . $cmapFilter . " >>\nstream\n" . $cmapStream . "\nendstream");
+
             $typeZero = $add('<< /Type /Font /Subtype /Type0 /BaseFont /' . $ttf->postScriptName
-                . ' /Encoding /Identity-H /DescendantFonts [' . $cidNum . ' 0 R] >>');
+                . ' /Encoding /Identity-H /DescendantFonts [' . $cidNum . ' 0 R]'
+                . ' /ToUnicode ' . $toUni . ' 0 R >>');
             $fontRefs[$entry['id']] = $typeZero;
         }
         // Images

@@ -117,20 +117,30 @@ final class Kdp
         $texts = $cover ? (json_decode((string) $cover['texts'], true) ?: []) : [];
         $summary = Layout::summary($project, $concept);
 
+        $priceEur = (float) ($meta['price'] ?? $summary['pricing']['price']);
+        $author = [
+            'first_name' => $meta['author_first'] ?: (explode(' ', (string) ($texts['author'] ?? ''), 2)[0] ?? ''),
+            'last_name'  => $meta['author_last'] ?: (explode(' ', (string) ($texts['author'] ?? ''), 2)[1] ?? ''),
+        ];
+
         return [
             'project_id'  => $projectId,
             'language'    => Config::get('kdp.language', 'Français'),
             'marketplace' => Config::get('kdp.marketplace', 'Amazon.fr'),
             'title'       => $texts['title'] ?? ($concept['title'] ?? $project['title']),
             'subtitle'    => $meta['subtitle'],
-            'author'      => [
-                'first_name' => $meta['author_first'] ?: (explode(' ', (string) ($texts['author'] ?? ''), 2)[0] ?? ''),
-                'last_name'  => $meta['author_last'] ?: (explode(' ', (string) ($texts['author'] ?? ''), 2)[1] ?? ''),
-            ],
+            'series'      => '',
+            'edition'     => '',
+            'author'      => $author,
+            'author_full' => trim($author['first_name'] . ' ' . $author['last_name']),
             'description_html' => $meta['description_html'],
             'keywords'    => array_pad($meta['keywords'], 7, ''),
             'categories'  => $meta['categories'],
-            'price_eur'   => $meta['price'] ?? $summary['pricing']['price'],
+            'price_eur'   => $priceEur,
+            // Prix conseillé sur chaque boutique Amazon, converti depuis l'euro
+            // (taux dans config.php → kdp.fx) et arrondi en .99 : le userscript
+            // remplit chaque champ de la page « Tarification ».
+            'prices'      => self::marketplacePrices($priceEur),
             'isbn'        => $meta['isbn'],
             // ISBN vide = on choisit le numéro GRATUIT proposé par KDP : le
             // userscript sélectionne l'option correspondante dans le formulaire.
@@ -138,12 +148,50 @@ final class Kdp
             'trim'        => $project['trim_format'],
             'pages'       => $summary['geometry']['pages'],
             'ink'         => ($project['photo_style'] ?? 'nb') === 'couleur' ? 'color' : 'black_white',
-            'paper'       => 'white',
+            'paper'       => (string) Config::get('kdp.paper', 'white'),
+            'cover_finish'=> (string) Config::get('kdp.cover_finish', 'matte'),
             // L'intérieur est exporté AVEC fond perdu (aplats bord à bord) :
             // choisir « avec fond perdu » dans le formulaire KDP.
             'bleed'       => true,
+            // Réponses aux questions fermées du formulaire : l'auteur est
+            // titulaire des droits, le contenu n'est pas réservé aux adultes.
+            'rights'      => 'own_copyright',
+            'adult'       => false,
             'generated_at'=> date('c'),
         ];
+    }
+
+    /**
+     * Prix conseillé par boutique Amazon à partir du prix en euros.
+     * Les boutiques de la zone euro reprennent le prix tel quel ; les autres
+     * appliquent le taux configuré, arrondi au .99 inférieur le plus proche.
+     */
+    private static function marketplacePrices(float $priceEur): array
+    {
+        $fx = (array) Config::get('kdp.fx', []);
+        $markets = [
+            'fr' => 'EUR', 'de' => 'EUR', 'es' => 'EUR', 'it' => 'EUR', 'nl' => 'EUR',
+            'us' => 'USD', 'uk' => 'GBP', 'ca' => 'CAD', 'au' => 'AUD',
+            'jp' => 'JPY', 'pl' => 'PLN', 'se' => 'SEK', 'in' => 'INR',
+        ];
+        $prices = [];
+        foreach ($markets as $code => $currency) {
+            $rate = $currency === 'EUR' ? 1.0 : (float) ($fx[$currency] ?? 0);
+            if ($rate <= 0) {
+                continue;
+            }
+            $value = $priceEur * $rate;
+            // Yens et roupies : pas de centimes, on arrondit à la centaine/dizaine.
+            if ($currency === 'JPY') {
+                $value = round($value / 100) * 100;
+            } elseif ($currency === 'INR') {
+                $value = round($value / 10) * 10 - 1;
+            } else {
+                $value = floor($value) + 0.99;
+            }
+            $prices[$code] = ['currency' => $currency, 'value' => round($value, 2)];
+        }
+        return $prices;
     }
 
     /** Contenu A+ Amazon : textes des modules générés puis mémorisés. */

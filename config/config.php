@@ -111,6 +111,16 @@ return [
         // Zone code-barres réservée par KDP au dos (mm)
         'barcode_w_mm'   => 50.8,
         'barcode_h_mm'   => 30.5,
+        // Impression : valeurs pré-sélectionnées par le userscript de
+        // remplissage (page « Contenu » du formulaire KDP).
+        'paper'          => 'white',      // white | cream
+        'cover_finish'   => 'matte',      // matte | glossy
+        // Taux de change utilisés pour proposer un prix sur les autres
+        // boutiques Amazon à partir du prix en euros (arrondi en .99).
+        'fx' => [
+            'USD' => 1.08, 'GBP' => 0.86, 'CAD' => 1.47, 'AUD' => 1.64,
+            'JPY' => 165.0, 'PLN' => 4.30, 'SEK' => 11.30, 'INR' => 90.0,
+        ],
     ],
 
     // ── Formats d'impression proposés ──────────────────────────────────────

@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-13 · c23';
+  const BUILD = '2026-08-16 · c24';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -200,6 +200,10 @@
       S.coverElsFront = null;
       S.coverElsBack = null;
       S.coverLibrary = null;
+      S.coverCustom = null;
+      S.importAnalysis = null;
+      S.importMode = 'identique';
+      S.importOwned = false;
       S.editorEls = null;
       S.interiorThemes = null;
       S.layoutOptions = null;
@@ -479,7 +483,9 @@
 
   function step1View() {
     const p = S.project;
-    const isDescribe = p.mode !== 'trends';
+    const mode = p.mode === 'trends' ? 'trends' : (p.mode === 'import' ? 'import' : 'describe');
+    const isDescribe = mode === 'describe';
+    const imp = S.importAnalysis;
     const themes = currentThemes();
     const showThemes = themes.length > 0;
 
@@ -488,15 +494,73 @@
       <div class="page-head" style="max-width:640px;">
         <div class="kicker">Étape 01 — Niche</div>
         <h1>Trouvez une thématique<br>qui se vend déjà.</h1>
-        <p class="lead">Décrivez votre idée pour la confronter au marché, ou partez des catégories les plus consultées sur Amazon ces 30 derniers jours.</p>
+        <p class="lead">Décrivez votre idée pour la confronter au marché, partez des catégories les plus consultées sur Amazon, ou repartez d'un livre que vous avez déjà écrit.</p>
       </div>
 
       <div class="mode-toggle">
-        <div class="${isDescribe ? 'on' : ''}" onclick="App.setMode('describe')">J'ai une idée</div>
-        <div class="${!isDescribe ? 'on' : ''}" onclick="App.setMode('trends')">Explorer les tendances</div>
+        <div class="${mode === 'describe' ? 'on' : ''}" onclick="App.setMode('describe')">J'ai une idée</div>
+        <div class="${mode === 'trends' ? 'on' : ''}" onclick="App.setMode('trends')">Explorer les tendances</div>
+        <div class="${mode === 'import' ? 'on' : ''}" onclick="App.setMode('import')">📄 Importer un livre</div>
       </div>
 
-      ${isDescribe ? `
+      ${mode === 'import' ? `
+      <div class="idea-grid">
+        <div class="card card-pad">
+          <div style="font-size:14px; font-weight:600; margin-bottom:6px;">Repartir d'un livre existant (PDF)</div>
+          <div class="faint" style="font-size:12.5px; line-height:1.55; margin-bottom:14px;">
+            Le texte est extrait et structuré en chapitres. Aucun envoi à l'IA à cette étape : l'analyse est entièrement locale à votre serveur.
+          </div>
+          <button class="btn btn-soft" style="width:100%;" onclick="App.pickImportPdf()" ${S.busy.importan ? 'disabled' : ''}>
+            ${S.busy.importan ? '<span class="spinner"></span> Analyse du PDF…' : (imp ? '↻ Choisir un autre PDF' : '📄 Choisir mon fichier PDF')}
+          </button>
+
+          ${imp ? `
+          <div class="import-summary">
+            <div class="row"><span>Pages</span><span class="mono">${imp.pages}</span></div>
+            <div class="row"><span>Chapitres détectés</span><span class="mono">${imp.chapters.length}</span></div>
+            <div class="row"><span>Mots</span><span class="mono">${nf(imp.words_total)}</span></div>
+          </div>
+          <label style="margin-top:14px; display:block;">Titre du livre
+            <input type="text" id="import-title" value="${esc(imp.title_guess || '')}" placeholder="Titre repris sur la couverture">
+          </label>
+
+          <div style="font-size:13.5px; font-weight:600; margin:18px 0 8px;">Que voulez-vous en faire ?</div>
+          <div class="import-modes">
+            <label class="import-mode ${(S.importMode || 'identique') === 'identique' ? 'on' : ''}">
+              <input type="radio" name="impmode" ${(S.importMode || 'identique') === 'identique' ? 'checked' : ''} onchange="App.setImportMode('identique')">
+              <span><strong>Le reprendre à l'identique</strong><br>
+              <span class="faint">Contenu conservé mot pour mot. Vous filez directement à la couverture et à la mise en page — aucun crédit IA.</span></span>
+            </label>
+            <label class="import-mode ${S.importMode === 'inspire' ? 'on' : ''}">
+              <input type="radio" name="impmode" ${S.importMode === 'inspire' ? 'checked' : ''} onchange="App.setImportMode('inspire')">
+              <span><strong>S'en inspirer pour un nouveau livre</strong><br>
+              <span class="faint">Seul le plan sert de point de départ : l'IA rédige un contenu neuf, qui vous appartient.</span></span>
+            </label>
+          </div>
+
+          ${(S.importMode || 'identique') === 'identique' ? `
+          <label class="import-owned">
+            <input type="checkbox" id="import-owned" ${S.importOwned ? 'checked' : ''} onchange="App.setImportOwned(this.checked)">
+            <span>Je confirme être l'auteur de ce livre ou en détenir les droits.</span>
+          </label>` : ''}
+
+          <button class="btn btn-primary" style="width:100%; margin-top:14px;" onclick="App.applyImport()"
+                  ${S.busy.importap || ((S.importMode || 'identique') === 'identique' && !S.importOwned) ? 'disabled' : ''}>
+            ${S.busy.importap ? '<span class="spinner"></span> Import en cours…'
+              : ((S.importMode || 'identique') === 'identique' ? 'Importer et passer à la couverture →' : 'Importer le plan et continuer →')}
+          </button>` : ''}
+        </div>
+
+        <div class="signals">
+          <div class="head">${imp ? 'Structure détectée' : 'Comment ça marche'}</div>
+          ${imp ? imp.chapters.map((c, i) => `
+          <div class="row"><span class="n">${pad2(i + 1)}</span><span>${esc(c.title)} <span style="opacity:.6;">· ${nf(c.words)} mots</span></span></div>`).join('')
+            : ['Choisissez le PDF de votre livre', 'Le texte est extrait et découpé en chapitres', 'Vous choisissez : à l\'identique ou source d\'inspiration', 'Direction la couverture et la mise en page']
+              .map((t, i) => `<div class="row"><span class="n">${pad2(i + 1)}</span><span>${t}</span></div>`).join('')}
+        </div>
+      </div>` : ''}
+
+      ${mode === 'describe' ? `
       <div class="idea-grid">
         <div class="card card-pad">
           <label>Votre idée, en quelques lignes
@@ -523,7 +587,7 @@
             <span class="mono">${S.app.canopy.used}/${S.app.canopy.budget}${S.app.canopy.exhausted ? ' · épuisé' : ''}</span>
           </div>` : ''}
         </div>
-      </div>` : `
+      </div>` : mode === 'import' ? '' : `
       ${!showThemes && !S.busy.trends ? `<div class="card card-pad" style="text-align:center; padding:40px;">
         <p class="muted" style="margin:0 0 16px;">Chargez le classement des catégories les plus consultées sur Amazon.fr.</p>
         <button class="btn btn-primary" onclick="App.loadTrends()">Charger les tendances</button>
@@ -765,6 +829,25 @@
             </div>`).join('')}
           </div>`}
 
+          <div style="font-size:14px; font-weight:600; margin:20px 0 8px;">Ma couverture est déjà prête</div>
+          <div class="faint" style="font-size:11.5px; line-height:1.5; margin-bottom:9px;">
+            Envoyez votre fichier : il remplace la couverture composée dans les exports.
+            PDF = broché complet (4ème + dos + 1ère), JPG/PNG = 1ère de couverture (eBook).
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px; flex:1;" onclick="App.uploadCustomCover()" ${S.busy.customcov ? 'disabled' : ''}>
+              ${S.busy.customcov ? '<span class="spinner"></span> Envoi…' : '⬆ Envoyer ma couverture'}
+            </button>
+            ${(S.coverCustom && (S.coverCustom.wrap || S.coverCustom.front))
+              ? `<button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px;" onclick="App.clearCustomCover()" title="Revenir à la couverture composée">✕</button>` : ''}
+          </div>
+          ${S.coverCustom && (S.coverCustom.wrap || S.coverCustom.front) ? `
+          <div class="custom-cover-note">
+            ✓ Vos fichiers sont utilisés dans les exports :
+            ${S.coverCustom.wrap ? '<strong>PDF broché</strong>' : ''}${S.coverCustom.wrap && S.coverCustom.front ? ' · ' : ''}${S.coverCustom.front ? '<strong>JPG eBook</strong>' : ''}.
+            L'éditeur ci-contre reste disponible pour l'autre face.
+          </div>` : ''}
+
           <div style="font-size:14px; font-weight:600; margin:20px 0 8px;">Illustration flat design (IA)</div>
           <label style="font-weight:400;"><span class="faint" style="font-size:12px;">Décrivez l'image souhaitée — le style flat est imposé automatiquement</span>
             <textarea rows="3" id="cover-illus-prompt" placeholder="${esc(S.coverDefaultPrompt || '')}">${esc(cover.texts.illus_prompt || '')}</textarea>
@@ -861,6 +944,7 @@
       S.coverElsBack = data.els_back;
       S.editorEls = S.coverFace === 'back' ? data.els_back : data.els;
       S.coverLibrary = data.library || [];
+      S.coverCustom = data.custom || { wrap: false, front: false };
       S.coverFonts = data.fonts;
       S.coverMotifs = data.motifs;
       S.coverGeometry = data.geometry;
@@ -1847,7 +1931,7 @@
         <div class="sub" style="margin-bottom:12px;">
           1. Installez l'extension Tampermonkey puis <a href="assets/kdp-autofill.user.js" target="_blank">ouvrez le userscript</a> pour l'installer.<br>
           2. Créez un jeton ci-dessous et collez-le (avec l'URL de ce site) dans le panneau « ${esc(S.app.name)} » qui apparaît sur kdp.amazon.com.<br>
-          3. Sur chaque page du formulaire KDP, cliquez « Remplir cette page » : titre, sous-titre, auteur, description, mots-clés et prix sont saisis automatiquement.
+          3. Choisissez votre livre dans la liste : c'est votre seul geste. Chaque page du formulaire se remplit ensuite toute seule dès que ses champs apparaissent — titre, sous-titre, auteur, description, 7 mots-clés, droits, ISBN gratuit KDP, format, fond perdu, papier, finition et prix sur chaque boutique Amazon. Le clic « Publier » reste le vôtre.
         </div>
         ${tokens.map(t => `
         <div class="token-row">
@@ -2041,6 +2125,53 @@
       App.ideaChanged();
     },
 
+    pickImportPdf() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/pdf,.pdf';
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const form = new FormData();
+        form.append('id', S.project.id);
+        form.append('file', input.files[0]);
+        setBusy('importan', true);
+        try {
+          const data = await Api.upload('import/analyze', form);
+          S.importAnalysis = data.analysis;
+          S.importMode = S.importMode || 'identique';
+          toast(data.analysis.chapters.length + ' chapitres détectés · ' + nf(data.analysis.words_total) + ' mots.');
+        } catch (e) { toast(e.message, true); }
+        setBusy('importan', false);
+      };
+      input.click();
+    },
+
+    setImportMode(mode) { S.importMode = mode; render(); },
+    setImportOwned(v) { S.importOwned = !!v; render(); },
+
+    async applyImport() {
+      if (!S.importAnalysis) return;
+      const mode = S.importMode || 'identique';
+      const title = (document.getElementById('import-title') || {}).value || '';
+      setBusy('importap', true);
+      try {
+        const data = await Api.post('import/apply', {
+          id: S.project.id, mode, title, owned: S.importOwned ? 1 : 0
+        });
+        S.project = data.project;
+        S.importAnalysis = null;
+        await refreshProject();
+        S.step = data.step;
+        enterStep();
+        toast(mode === 'identique'
+          ? data.chapters + ' chapitres repris (' + nf(data.words) + ' mots) — à vous la couverture.'
+          : 'Plan importé — définissez le sommaire puis lancez la rédaction.');
+      } catch (e) { toast(e.message, true); }
+      setBusy('importap', false);
+      render();
+      window.scrollTo(0, 0);
+    },
+
     async analyze() {
       const idea = (document.getElementById('idea-text') || {}).value || S.project.idea || '';
       setBusy('analyze', true);
@@ -2213,6 +2344,38 @@
         S.coverStamp = Date.now();
         render();
         toast('Composition automatique restaurée.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    uploadCustomCover() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const form = new FormData();
+        form.append('id', S.project.id);
+        form.append('file', input.files[0]);
+        setBusy('customcov', true);
+        try {
+          const data = await Api.upload('coverstudio/upload-custom', form);
+          S.coverCustom = data.custom;
+          S.coverStamp = Date.now();
+          toast('Couverture importée — elle sera utilisée telle quelle dans les exports.');
+        } catch (e) { toast(e.message, true); }
+        setBusy('customcov', false);
+        render();
+      };
+      input.click();
+    },
+
+    async clearCustomCover() {
+      if (!confirm('Revenir à la couverture composée dans le studio ?')) return;
+      try {
+        const data = await Api.post('coverstudio/clear-custom', { id: S.project.id, kind: '' });
+        S.coverCustom = data.custom;
+        S.coverStamp = Date.now();
+        render();
       } catch (e) { toast(e.message, true); }
     },
 

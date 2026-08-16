@@ -373,6 +373,27 @@ final class CoverStudio
     }
 
     /**
+     * VOTRE couverture déjà prête : 'wrap' = PDF broché complet (4ème + dos +
+     * 1ère, prêt pour KDP), 'front' = image de 1ère de couverture (eBook).
+     * Quand ces fichiers existent, ils priment sur la couverture composée.
+     */
+    public static function customCoverPath(int $projectId, string $kind): string
+    {
+        $kind = $kind === 'wrap' ? 'wrap' : 'front';
+        $ext = $kind === 'wrap' ? 'pdf' : 'jpg';
+        return (string) Config::get('paths.uploads') . '/cover-custom-' . $kind . '-' . $projectId . '.' . $ext;
+    }
+
+    /** @return array{wrap:bool,front:bool} */
+    public static function customCovers(int $projectId): array
+    {
+        return [
+            'wrap'  => is_file(self::customCoverPath($projectId, 'wrap')),
+            'front' => is_file(self::customCoverPath($projectId, 'front')),
+        ];
+    }
+
+    /**
      * BIBLIOTHÈQUE d'illustrations du projet : chaque génération IA y est
      * conservée (rien n'est écrasé). L'illustration ACTIVE reste illusPath(),
      * simple copie de l'entrée choisie.

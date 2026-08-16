@@ -163,16 +163,23 @@ boucle d'écriture (compatible mutualisé : aucun processus long côté serveur)
    (sous-titre, description HTML, 7 mots-clés, catégories, prix) et créez un **jeton d'accès**.
 2. Installez [Tampermonkey](https://www.tampermonkey.net/) puis le userscript
    `tools/kdp-autofill.user.js` (aussi servi sur `assets/kdp-autofill.user.js`).
-3. Sur **kdp.amazon.com**, le panneau « Tirage » apparaît : URL du studio + jeton →
-   « Charger mes projets » → choisissez le livre → **« Remplir cette page »** sur chaque
-   écran du formulaire (détails, contenu, tarification). Le script remplit titre,
-   sous-titre, auteur, description, mots-clés, prix, ISBN via les événements natifs.
-4. Téléversez les fichiers générés (PDF intérieur, couverture, ou .docx pour l'eBook)
+3. Sur **kdp.amazon.com**, le panneau « Tirage » apparaît : URL du studio + jeton (demandés
+   une seule fois, puis mémorisés) → **choisissez votre livre**. C'est le seul geste.
+4. Naviguez normalement dans le formulaire : **chaque page se remplit toute seule** dès que
+   ses champs apparaissent — titre, sous-titre, auteur, description, 7 mots-clés, droits
+   d'auteur, contenu adulte, ISBN gratuit KDP, format d'impression, fond perdu, encre &
+   papier, finition de couverture, et le prix sur **chaque boutique Amazon** (converti depuis
+   l'euro via `config.php → kdp.fx`). Un bouton « Remplir cette page maintenant » et un
+   interrupteur « remplissage automatique » restent disponibles dans le panneau.
+5. Téléversez les fichiers générés (PDF intérieur, couverture, ou .docx pour l'eBook)
    et cliquez vous-même sur « Publier ».
 
 > ⚠️ Volontairement, le **clic final reste manuel** : c'est votre compte KDP, vous validez.
-> Amazon fait évoluer son formulaire ; les sélecteurs de champs sont regroupés en tête du
-> userscript (`FIELD_SELECTORS`) pour être ajustés en quelques secondes si besoin.
+> Un champ **déjà rempli n'est jamais écrasé** (le vôtre gagne toujours), et les catégories
+> restent à choisir dans la fenêtre KDP — le panneau vous les rappelle.
+> Amazon fait évoluer son formulaire : chaque champ est cherché par identifiant (`FIELD_SELECTORS`,
+> `CHOICES`) **puis par libellé visible** FR/EN, et le remplissage est rejoué tant que la page
+> bouge — un changement d'identifiants côté Amazon ne casse donc pas le remplissage.
 > L'automatisation de saisie dans votre propre navigateur relève de votre responsabilité
 > vis-à-vis des conditions d'utilisation d'Amazon.
 

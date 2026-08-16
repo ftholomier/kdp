@@ -256,7 +256,7 @@ final class Router
                 $project = self::project((int) Http::in('id'), $userId);
                 self::updateProject((int) $project['id'], $userId); // applique pages/photos/ton/format envoyés
                 $project = self::project((int) $project['id'], $userId);
-                $concept = self::selectedConcept($project);
+                $concept = self::bookContext($project);
                 Http::ok(['toc' => Toc::generate($project, $concept), 'project' => $project]);
 
             case 'toc/save':
@@ -296,6 +296,7 @@ final class Router
                     'els'              => Covers::frontElements($cover, $hasIllus),
                     'els_back'         => Covers::backElements($cover),
                     'library'          => CoverStudio::illusLibrary((int) $project['id']),
+                    'custom'           => CoverStudio::customCovers((int) $project['id']),
                     'fonts'            => CoverStudio::fonts(),
                     'motifs'           => CoverStudio::MOTIFS,
                     'geometry'         => $geometry,
@@ -320,7 +321,7 @@ final class Router
             case 'covers/generate-back':
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
-                $concept = self::selectedConcept($project);
+                $concept = self::bookContext($project);
                 Http::ok(['generated' => Covers::generateBack($project, $concept, $user)]);
 
             case 'covers/render':
@@ -470,6 +471,45 @@ final class Router
                 @unlink(CoverStudio::illusPath((int) $project['id']));
                 Http::ok();
 
+            case 'coverstudio/upload-custom':
+                // VOTRE couverture déjà prête (JPG/PNG pour l'eBook, PDF pour le broché)
+                Http::requirePost();
+                @set_time_limit(120);
+                $project = self::project((int) ($_POST['id'] ?? 0), $userId);
+                $file = $_FILES['file'] ?? null;
+                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                    Http::error('Fichier manquant.');
+                }
+                $ext = strtolower((string) pathinfo((string) $file['name'], PATHINFO_EXTENSION));
+                if (!in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
+                    Http::error('Formats acceptés : PDF (broché complet) ou JPG/PNG (1ère de couverture).');
+                }
+                $kind = $ext === 'pdf' ? 'wrap' : 'front';
+                $dest = CoverStudio::customCoverPath((int) $project['id'], $kind);
+                if (!move_uploaded_file($file['tmp_name'], $dest) && !copy($file['tmp_name'], $dest)) {
+                    Http::error('Impossible d\'enregistrer le fichier.');
+                }
+                if ($kind === 'front') {
+                    $info = @getimagesize($dest);
+                    if (!$info) {
+                        @unlink($dest);
+                        Http::error('Image illisible.');
+                    }
+                }
+                Util::journal((int) $project['id'], 'ok', 'Couverture personnelle importée ('
+                    . ($kind === 'wrap' ? 'PDF broché complet' : 'image de 1ère de couverture') . ') — utilisée telle quelle dans les exports.');
+                Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
+
+            case 'coverstudio/clear-custom':
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                foreach (['wrap', 'front'] as $kind) {
+                    if (Http::in('kind') === '' || Http::in('kind') === $kind) {
+                        @unlink(CoverStudio::customCoverPath((int) $project['id'], $kind));
+                    }
+                }
+                Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
+
             case 'coverstudio/upload-ref':
                 Http::requirePost();
                 $project = self::project((int) ($_POST['id'] ?? 0), $userId);
@@ -496,6 +536,17 @@ final class Router
             case 'coverstudio/front':
                 @set_time_limit(120);
                 $project = self::project((int) Http::in('id'), $userId);
+                $customFront = CoverStudio::customCoverPath((int) $project['id'], 'front');
+                if (is_file($customFront)) {
+                    header('Content-Type: image/jpeg');
+                    header('Cache-Control: no-store');
+                    if (Http::in('download')) {
+                        header('Content-Disposition: attachment; filename="couverture-ebook-' . (int) $project['id'] . '.jpg"');
+                    }
+                    header('Content-Length: ' . (string) filesize($customFront));
+                    readfile($customFront);
+                    exit;
+                }
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 $illus = CoverStudio::illusPath((int) $project['id']);
                 $els = Covers::frontElements($cover, is_file($illus));
@@ -542,6 +593,11 @@ final class Router
                 // par KDP pour l'impression, téléversable tel quel.
                 @set_time_limit(300);
                 $project = self::project((int) Http::in('id'), $userId);
+                // Vous avez importé VOTRE couverture : elle est servie telle quelle
+                $customWrap = CoverStudio::customCoverPath((int) $project['id'], 'wrap');
+                if (is_file($customWrap)) {
+                    self::download($customWrap, 'couverture-broche-kdp.pdf', 'application/pdf');
+                }
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 $geometry = \App\Services\Layout::geometry($project);
                 $illus = CoverStudio::illusPath((int) $project['id']);
@@ -677,6 +733,57 @@ final class Router
                     (string) Http::in('param', '')
                 ));
 
+            // ── Étape 01 : import d'un livre PDF existant ──
+            case 'import/analyze':
+                // Téléversement + analyse : structure détectée, RIEN n'est encore appliqué
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) ($_POST['id'] ?? 0), $userId);
+                $file = $_FILES['file'] ?? null;
+                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                    Http::error('Fichier PDF manquant.');
+                }
+                if (strtolower((string) pathinfo((string) $file['name'], PATHINFO_EXTENSION)) !== 'pdf') {
+                    Http::error('Format attendu : PDF.');
+                }
+                $dir = (string) Config::get('paths.uploads');
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0775, true);
+                }
+                $stored = $dir . '/import-' . (int) $project['id'] . '.pdf';
+                if (!move_uploaded_file($file['tmp_name'], $stored) && !copy($file['tmp_name'], $stored)) {
+                    Http::error('Impossible d\'enregistrer le fichier téléversé.');
+                }
+                $analysis = \App\Services\BookImport::analyze($stored);
+                // Aperçu allégé (le texte intégral reste sur le serveur)
+                Http::ok(['analysis' => [
+                    'pages'       => $analysis['pages'],
+                    'words_total' => $analysis['words_total'],
+                    'title_guess' => $analysis['title_guess'],
+                    'chapters'    => array_map(fn ($c) => [
+                        'title'    => $c['title'],
+                        'words'    => $c['words'],
+                        'sections' => array_map(fn ($x) => $x['title'], $c['sections']),
+                    ], $analysis['chapters']),
+                ]]);
+
+            case 'import/apply':
+                // Application au projet : « identique » ou « inspire »
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $stored = (string) Config::get('paths.uploads') . '/import-' . (int) $project['id'] . '.pdf';
+                if (!is_file($stored)) {
+                    Http::error('Aucun PDF analysé pour ce projet — reprenez le téléversement.');
+                }
+                $mode = Http::in('mode') === 'identique' ? 'identique' : 'inspire';
+                if ($mode === 'identique' && !Http::in('owned')) {
+                    Http::error('Confirmez que ce livre vous appartient pour le reprendre à l\'identique.');
+                }
+                $analysis = \App\Services\BookImport::analyze($stored);
+                $result = \App\Services\BookImport::apply($project, $analysis, $mode, (string) Http::in('title', ''));
+                Http::ok($result + ['project' => self::project((int) $project['id'], $userId)]);
+
             // ── Sections : édition directe et retouche IA ──
             case 'sections/save':
                 Http::requirePost();
@@ -807,7 +914,7 @@ final class Router
             case 'kdpmeta/generate':
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
-                Http::ok(['meta' => Kdp::generate($project, self::selectedConcept($project), $user)]);
+                Http::ok(['meta' => Kdp::generate($project, self::bookContext($project), $user)]);
 
             case 'kdpmeta/save':
                 Http::requirePost();
@@ -1085,7 +1192,7 @@ final class Router
         $map = [
             'title'       => fn ($v) => mb_substr(trim((string) $v), 0, 250),
             'step'        => fn ($v) => max(1, min(7, (int) $v)),
-            'mode'        => fn ($v) => in_array($v, ['describe', 'trends'], true) ? $v : 'describe',
+            'mode'        => fn ($v) => in_array($v, ['describe', 'trends', 'import'], true) ? $v : 'describe',
             'idea'        => fn ($v) => (string) $v,
             'pages'       => fn ($v) => max(60, min(400, (int) $v)),
             'final_pages' => fn ($v) => ($v === '' || $v === null || (int) $v <= 0) ? null : max(24, min(828, (int) $v)),
@@ -1149,6 +1256,58 @@ final class Router
             Http::error('Sélectionnez d\'abord un livre (étape 2).');
         }
         return $concept;
+    }
+
+    /**
+     * Contexte éditorial pour les prompts IA : le concept choisi à l'étape 02
+     * s'il existe, SINON reconstitué à partir du livre lui-même (titre,
+     * couverture, plan et premières lignes). Indispensable aux livres importés
+     * ou créés sans passer par la sélection de concept : la génération des
+     * textes de couverture et des métadonnées KDP fonctionne dans tous les cas.
+     */
+    private static function bookContext(array $project): array
+    {
+        $concept = self::selectedConceptOrNull($project);
+        if ($concept) {
+            return $concept;
+        }
+        $projectId = (int) $project['id'];
+        $coverRow = Db::one('SELECT texts FROM covers WHERE project_id = ?', [$projectId]);
+        $texts = $coverRow ? (json_decode((string) $coverRow['texts'], true) ?: []) : [];
+
+        $chapters = Db::all(
+            "SELECT title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num LIMIT 20",
+            [$projectId]
+        );
+        $first = Db::one(
+            "SELECT s.content FROM sections s JOIN chapters c ON c.id = s.chapter_id
+             WHERE c.project_id = ? AND s.content IS NOT NULL AND s.content != '' ORDER BY c.num, s.num LIMIT 1",
+            [$projectId]
+        );
+
+        $title = trim((string) ($texts['title'] ?? '')) ?: (string) $project['title'];
+        $description = trim((string) ($texts['back_text'] ?? ''));
+        if ($description === '') {
+            $description = trim((string) $project['idea']);
+        }
+        if ($description === '' && $first) {
+            $description = mb_substr(trim(preg_replace('/\s+/u', ' ', (string) $first['content']) ?? ''), 0, 500);
+        }
+        if ($chapters) {
+            $description .= "\nPlan du livre : " . implode(' · ', array_column($chapters, 'title'));
+        }
+        $summary = Layout::summary($project, null);
+
+        return [
+            'id'          => null,
+            'title'       => $title,
+            'short_title' => mb_substr($title, 0, 120),
+            'hook'        => trim((string) ($texts['tagline'] ?? '')),
+            'description' => trim($description) !== '' ? trim($description) : ('Livre pratique : ' . $title),
+            'badge'       => '',
+            'competition' => 'Moyenne',
+            'price'       => number_format((float) ($summary['pricing']['price'] ?? 14.9), 2, ',', ' ') . ' €',
+        ];
     }
 
     /** Section appartenant bien au projet (avec contexte chapitre). */

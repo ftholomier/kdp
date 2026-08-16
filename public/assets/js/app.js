@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-13 · c22';
+  const BUILD = '2026-08-13 · c23';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -203,6 +203,9 @@
       S.editorEls = null;
       S.interiorThemes = null;
       S.layoutOptions = null;
+      S.layoutColors = null;
+      S.coverPaletteRef = null;
+      S.layoutStamp = 0;
       S.kdpMeta = null;
       S.keywordRanks = null;
       S.sectionEdit = null;
@@ -870,6 +873,14 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  async function reloadInteriorThemes() {
+    const themes = await Api.get('interior/themes', { id: S.project.id });
+    S.interiorThemes = themes.themes;
+    S.layoutOptions = themes.options || [];
+    S.layoutColors = themes.colors || null;
+    S.coverPaletteRef = themes.cover_palette || {};
+  }
+
   async function loadCoverVariants() {
     setBusy('variants', true);
     try {
@@ -1224,7 +1235,9 @@
     const L = S.layout;
     const theme = S.project.interior_theme || 'editorial';
     const themeName = ((S.interiorThemes || []).find(t => t.slug === theme) || {}).name || '';
-    const pdfUrl = `api.php?r=export/pdf&id=${S.project.id}&inline=1&theme=${encodeURIComponent(theme)}`;
+    const pdfUrl = `api.php?r=export/pdf&id=${S.project.id}&inline=1&theme=${encodeURIComponent(theme)}&v=${S.layoutStamp || 0}`;
+    const colors = S.layoutColors || { accent: '#C4571F', ink: '#1A1A17', from_cover: true };
+    const coverPal = S.coverPaletteRef || {};
     return `
     <div class="layout-grid">
       <div class="layout-preview">
@@ -1243,7 +1256,7 @@
 
       <div class="layout-side">
         <div class="title">Mise en page intérieure</div>
-        <div class="sub">Choisissez le style : l'aperçu ci-contre montre le PDF réel, recomposé à chaque changement. La couleur d'accent vient de votre couverture.</div>
+        <div class="sub">Choisissez le style : l'aperçu ci-contre montre le PDF réel, recomposé à chaque changement. Les couleurs suivent votre couverture — ajustables ci-dessous.</div>
         <div class="cover-templates" style="margin-bottom:20px;">
           ${(S.interiorThemes || []).map(t => `
           <div class="cover-template ${t.selected ? 'on' : ''}" onclick="App.setInteriorTheme('${esc(t.slug)}')" title="${esc(t.desc)}">
@@ -1262,6 +1275,34 @@
             <span class="k">${esc(o.name)}</span>
           </label>`).join('')}
         </div>` : ''}
+
+        <div class="layout-composer" style="margin-bottom:22px;">
+          <div class="title" style="margin-bottom:4px;">🎨 Couleurs du livre</div>
+          <div class="sub" style="margin-bottom:12px;">
+            ${colors.from_cover
+              ? 'Reprises automatiquement de votre couverture — modifiez-les ici si vous voulez vous en écarter.'
+              : 'Couleurs personnalisées pour l\'intérieur.'}
+          </div>
+          <div class="color-row">
+            <label>Accent
+              <input type="color" value="${esc(colors.accent)}" onchange="App.setInteriorColor('accent', this.value)"
+                     title="Titres de chapitre, encadrés, chiffres clés, filets">
+            </label>
+            <label>Encre
+              <input type="color" value="${esc(colors.ink)}" onchange="App.setInteriorColor('ink', this.value)"
+                     title="Texte courant et titres">
+            </label>
+            ${!colors.from_cover ? `<button class="btn btn-ghost" style="padding:6px 11px; font-size:11.5px;" onclick="App.resetInteriorColors()">↺ Reprendre la couverture</button>` : ''}
+          </div>
+          ${Object.keys(coverPal).length ? `
+          <div class="cover-swatches">
+            <span class="lbl">Palette de la couverture — cliquez pour l'appliquer à l'accent :</span>
+            ${['c1', 'c2', 'c3', 'c4'].filter(k => coverPal[k]).map(k => `
+            <span class="sw ${colors.accent.toLowerCase() === String(coverPal[k]).toLowerCase() ? 'on' : ''}"
+                  style="background:${esc(coverPal[k])};" title="${k.toUpperCase()} · ${esc(coverPal[k])}"
+                  onclick="App.setInteriorColor('accent', '${esc(coverPal[k])}')"></span>`).join('')}
+          </div>` : ''}
+        </div>
 
         <div class="title">Réglages d'impression</div>
         <div class="sub">Conformes aux gabarits KDP broché.</div>
@@ -1304,9 +1345,7 @@
       S.layout = data;
       render();
       if (!S.interiorThemes) {
-        const themes = await Api.get('interior/themes', { id: S.project.id });
-        S.interiorThemes = themes.themes;
-        S.layoutOptions = themes.options || [];
+        await reloadInteriorThemes();
         render();
       }
     } catch (e) { toast(e.message, true); }
@@ -2460,6 +2499,29 @@
         render();
         const t = (S.interiorThemes || []).find(x => x.slug === slug);
         toast('Mise en page « ' + ((t && t.name) || slug) + ' » appliquée — l\'aperçu se recompose.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async setInteriorColor(key, value) {
+      const colors = S.layoutColors || {};
+      const payload = { accent: colors.accent, ink: colors.ink };
+      payload[key] = value;
+      try {
+        await Api.post('projects/update', { id: S.project.id, interior_colors: payload });
+        S.layoutColors = Object.assign({}, payload, { from_cover: false });
+        S.layoutStamp = Date.now();      // l'aperçu PDF se recompose
+        await reloadInteriorThemes();    // les vignettes suivent les couleurs
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
+    async resetInteriorColors() {
+      try {
+        await Api.post('projects/update', { id: S.project.id, interior_colors: '' });
+        S.layoutStamp = Date.now();
+        await reloadInteriorThemes();
+        render();
+        toast('Couleurs de la couverture reprises.');
       } catch (e) { toast(e.message, true); }
     },
 

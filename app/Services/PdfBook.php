@@ -49,6 +49,39 @@ final class PdfBook
         'endpages'   => ['name' => 'Pages de fin qui vendent',                 'desc' => 'Votre avis compte · Du même auteur · À propos (tous thèmes)'],
     ];
 
+    /**
+     * COULEURS effectives de l'intérieur : celles choisies à l'étape 07 si
+     * elles existent, sinon celles de la COUVERTURE (accent = c2, encre = c4
+     * quand elle est assez sombre pour du texte). Le livre reste ainsi
+     * cohérent avec sa couverture sans aucune manipulation.
+     */
+    public static function interiorColors(array $project, array $coverPalette): array
+    {
+        $hex = function (?string $v, string $fallback): string {
+            $v = trim((string) $v);
+            return preg_match('/^#[0-9a-fA-F]{6}$/', $v) ? $v : $fallback;
+        };
+        $luma = function (string $h): float {
+            [$r, $g, $b] = array_map('hexdec', str_split(ltrim($h, '#'), 2));
+            return 0.299 * $r + 0.587 * $g + 0.114 * $b;
+        };
+        $accent = $hex($coverPalette['c2'] ?? null, '#C4571F');
+        $c4 = $hex($coverPalette['c4'] ?? null, '#1A1A17');
+        // Une encre doit rester lisible : couleur de couverture trop claire → encre neutre
+        $ink = $luma($c4) < 110 ? $c4 : '#1A1A17';
+        $defaults = ['accent' => $accent, 'ink' => $ink];
+
+        $saved = json_decode((string) ($project['interior_colors'] ?? ''), true);
+        if (!is_array($saved)) {
+            return $defaults + ['from_cover' => true];
+        }
+        return [
+            'accent'     => $hex($saved['accent'] ?? null, $defaults['accent']),
+            'ink'        => $hex($saved['ink'] ?? null, $defaults['ink']),
+            'from_cover' => false,
+        ];
+    }
+
     /** Options effectives d'un projet (défauts + choix enregistrés). */
     public static function layoutOptions(array $project): array
     {
@@ -69,13 +102,13 @@ final class PdfBook
         return $defaults;
     }
 
-    public static function build(array $project, array $book, string $theme = 'editorial', string $accent = '#C4571F'): string
+    public static function build(array $project, array $book, string $theme = 'editorial', string $accent = '#C4571F', string $ink = '#1A1A17'): string
     {
         if (!isset(self::THEMES[$theme])) {
             $theme = 'editorial';
         }
         $geometry = Layout::geometry($project);
-        $composer = new PdfComposer($geometry, $book, $project, $theme, $accent);
+        $composer = new PdfComposer($geometry, $book, $project, $theme, $accent, $ink);
         $pdf = $composer->compose();
 
         $dir = (string) Config::get('paths.exports');
@@ -142,7 +175,8 @@ final class PdfComposer
         private array $book,
         private array $project,
         private string $theme,
-        string $accentHex
+        string $accentHex,
+        string $inkHex = '#1A1A17'
     ) {
         $mm = fn (float $v): float => $v * 72 / 25.4;
         $this->w = $mm($geometry['w_mm']);
@@ -155,6 +189,9 @@ final class PdfComposer
 
         $this->accent = self::hexRgb($accentHex);
         $this->accentSoft = array_map(fn ($c) => (int) round($c + (255 - $c) * 0.88), $this->accent);
+        $this->ink = self::hexRgb($inkHex);
+        // Les gris (titres courants, folios, légendes) suivent l'encre choisie
+        $this->gray = array_map(fn ($c) => (int) round($c + (255 - $c) * 0.55), $this->ink);
         $this->opts = PdfBook::layoutOptions($project);
 
         [$this->titleFont, $this->titleSize, $this->opener] = match ($theme) {

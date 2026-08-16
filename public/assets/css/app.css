@@ -437,6 +437,13 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .illus-library .item.on { border-color: var(--accent); }
 .illus-library .item img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; display: block; }
 .illus-library .item .del { position: absolute; top: 1px; right: 3px; font-size: 10px; color: #FFF; background: rgba(0,0,0,.55); border-radius: 50%; width: 14px; height: 14px; display: grid; place-items: center; cursor: pointer; }
+.color-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.color-row label { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-family: var(--sans); margin: 0; }
+.color-row input[type=color] { width: 40px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: none; }
+.cover-swatches { display: flex; align-items: center; gap: 7px; margin-top: 12px; flex-wrap: wrap; }
+.cover-swatches .lbl { font-size: 11px; color: var(--faint); margin-right: 2px; }
+.cover-swatches .sw { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.cover-swatches .sw.on { border-color: var(--ink); }
 .layout-composer { margin-bottom: 22px; padding: 16px 16px 10px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 12px; }
 .composer-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .composer-row:hover { background: #F4EDDD; }

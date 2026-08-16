@@ -752,11 +752,8 @@ final class Router
                 $theme = (string) (Http::in('theme') ?: ($project['interior_theme'] ?? 'editorial'));
                 $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
                 $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
-                $file = PdfBook::build(
-                    $project, $book,
-                    $theme,
-                    (string) ($coverPalette['c2'] ?? '#C4571F')
-                );
+                $colors = PdfBook::interiorColors($project, $coverPalette);
+                $file = PdfBook::build($project, $book, $theme, $colors['accent'], $colors['ink']);
                 self::download($file, Util::slug($book['title']) . '-interieur.pdf', 'application/pdf', (bool) Http::in('inline'));
 
             case 'interior/themes':
@@ -764,16 +761,20 @@ final class Router
                 $current = (string) ($project['interior_theme'] ?? 'editorial');
                 $coverRow = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
                 $coverPalette = $coverRow ? (json_decode((string) $coverRow['palette'], true) ?: []) : [];
-                $accent = (string) ($coverPalette['c2'] ?? '#C4571F');
+                $colors = PdfBook::interiorColors($project, $coverPalette);
+                $accent = $colors['accent'];
                 $effective = PdfBook::layoutOptions($project);
                 Http::ok([
                     'themes' => array_map(fn ($slug, $meta) => [
                         'slug'     => $slug,
                         'name'     => $meta['name'],
                         'desc'     => $meta['desc'],
-                        'thumb'    => \App\Services\InteriorThemes::thumb($slug, $accent),
+                        'thumb'    => \App\Services\InteriorThemes::thumb($slug, $accent, $colors['ink']),
                         'selected' => $slug === $current,
                     ], array_keys(PdfBook::THEMES), PdfBook::THEMES),
+                    // Couleurs du livre + palette de la couverture (référence)
+                    'colors'        => $colors,
+                    'cover_palette' => array_intersect_key($coverPalette, array_flip(['c1', 'c2', 'c3', 'c4'])),
                     // Composeur : ingrédients de mise en page + état coché
                     'options' => array_map(fn ($key, $meta) => [
                         'key'  => $key,
@@ -1094,6 +1095,18 @@ final class Router
             'tone'        => fn ($v) => mb_substr(trim((string) $v), 0, 50),
             'trim_format' => fn ($v) => Config::get('trims.' . $v) ? $v : '6x9',
             'interior_theme' => fn ($v) => isset(PdfBook::THEMES[$v]) ? $v : 'editorial',
+            'interior_colors' => function ($v) {
+                // '' ou null = revenir aux couleurs de la couverture
+                if (!is_array($v)) {
+                    return null;
+                }
+                $hex = fn ($x) => preg_match('/^#[0-9a-fA-F]{6}$/', (string) $x) ? (string) $x : null;
+                $clean = array_filter([
+                    'accent' => $hex($v['accent'] ?? null),
+                    'ink'    => $hex($v['ink'] ?? null),
+                ]);
+                return $clean ? json_encode($clean) : null;
+            },
             'layout_options' => function ($v) {
                 $clean = [];
                 foreach (array_keys(PdfBook::LAYOUT_OPTIONS) as $key) {

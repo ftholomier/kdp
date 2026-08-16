@@ -10,7 +10,7 @@ namespace App\Services;
  */
 final class InteriorThemes
 {
-    public static function thumb(string $slug, string $accentHex): string
+    public static function thumb(string $slug, string $accentHex, string $inkHex = '#1E1C18'): string
     {
         $w = 300;
         $h = 450;
@@ -21,8 +21,9 @@ final class InteriorThemes
         [$ar, $ag, $ab] = self::rgb($accentHex);
         $accent = imagecolorallocate($im, $ar, $ag, $ab);
         $accentSoft = imagecolorallocate($im, (int) ($ar + (255 - $ar) * 0.85), (int) ($ag + (255 - $ag) * 0.85), (int) ($ab + (255 - $ab) * 0.85));
-        $ink = imagecolorallocate($im, 30, 28, 24);
-        $gray = imagecolorallocate($im, 150, 143, 128);
+        [$ir, $ig, $ib] = self::rgb($inkHex);
+        $ink = imagecolorallocate($im, $ir, $ig, $ib);
+        $gray = imagecolorallocate($im, (int) ($ir + (255 - $ir) * 0.55), (int) ($ig + (255 - $ig) * 0.55), (int) ($ib + (255 - $ib) * 0.55));
         $lightGray = imagecolorallocate($im, 216, 210, 196);
 
         $fonts = APP_ROOT . '/app/fonts/';

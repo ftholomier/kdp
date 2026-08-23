@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-24 · c29';
+  const BUILD = '2026-08-24 · c30';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -306,7 +306,7 @@
           <span onclick="App.duplicateProject(${p.id})" title="Nouveau livre avec les mêmes réglages (format, thème, recette de mise en page, palette)">⧉ Dupliquer</span>
           <span onclick="window.open('api.php?r=projects/export&id=${p.id}', '_blank')" title="Sauvegarde complète du projet (JSON, images incluses)">⬇ Sauvegarder</span>
           ${p.writing_status === 'done' && !p.translate_from ? `<span onclick="App.translateProject(${p.id})" title="Créer la version étrangère : structure et couverture traduites, chaque section traduite à l'étape 05">🌍 Traduire</span>` : ''}
-          <span class="danger" onclick="App.deleteProject(${p.id}, ${JSON.stringify(String(p.title))})" title="Supprimer définitivement ce livre et tous ses fichiers">🗑 Supprimer</span>
+          <span class="danger" onclick="App.deleteProject(${p.id})" title="Supprimer définitivement ce livre et tous ses fichiers">🗑 Supprimer</span>
         </div>
       </div>`).join('');
 
@@ -2997,17 +2997,14 @@
     next6() { S.step = 7; enterStep(); render(); window.scrollTo(0, 0); },
 
     /**
-     * Suppression d'un livre : définitive, donc confirmée deux fois — la
-     * seconde en retapant le titre, comme pour tout geste irréversible.
+     * Suppression d'un livre : définitive, donc confirmée.
+     * On ne reçoit que l'identifiant — le titre est relu dans l'état, pour ne
+     * jamais injecter de texte libre dans l'attribut onclick de la vignette.
      */
-    async deleteProject(id, title) {
+    async deleteProject(id) {
+      const project = S.projects.find(p => Number(p.id) === Number(id));
+      const title = project ? String(project.title || '') : '';
       if (!confirm('Supprimer définitivement « ' + title + ' » ?\n\nLe texte, la couverture, les visuels et les fichiers importés seront effacés. Cette action est irréversible.')) return;
-      const typed = prompt('Pour confirmer, recopiez le titre du livre :', '');
-      if (typed === null) return;
-      if (typed.trim().toLowerCase() !== String(title).trim().toLowerCase()) {
-        toast('Titre non conforme — suppression annulée.', true);
-        return;
-      }
       try {
         await Api.post('projects/delete', { id });
         await loadProjects();

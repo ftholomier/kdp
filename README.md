@@ -245,6 +245,30 @@ dernière génération du sommaire ») et tracé dans le journal du projet.
 Les consignes suivent le livre partout : duplication, sauvegarde/restauration JSON et
 traduction les emportent avec elles (`App\Services\Brief`).
 
+## Générer une mise en page (étape 07)
+
+À côté du sélecteur de thèmes, **✨ Générer une mise en page** demande au studio
+d'imaginer des partis pris complets — thème, polices de titres et de texte, couleurs,
+ingrédients de composition — à partir de **vos consignes** et de ce que le livre contient
+réellement : nombre et longueur des sections, encadrés par type, tableaux, emplacements de
+visuels, format et pagination. Le profil est *mesuré* sur le texte écrit, jamais deviné.
+
+Chaque proposition s'essaie sur une **planche de 7 pages** : la page de sommaire et les
+6 premières pages de contenu, composées par **le vrai moteur PDF** — mêmes polices
+incorporées, mêmes marges, mêmes folios, sommaire paginé pour de bon. Le livre entier est
+composé puis seules ces pages sont conservées : l'aperçu ne peut donc pas mentir sur le
+rendu final. Tant que vous n'avez pas validé, **rien n'est appliqué** ; « ← Aperçu du
+livre » revient à la mise en page en cours.
+
+« ✓ Appliquer à tout le livre » écrit la recette sur le projet (thème, polices, couleurs,
+ingrédients) et le livre entier bascule dessus — le sélecteur de thèmes, le composeur et
+les listes de polices se resynchronisent aussitôt. « ↻ D'autres propositions » relance
+l'IA en lui disant ce qu'elle a déjà proposé, pour qu'elle change vraiment de direction.
+
+L'IA ne choisit que dans le catalogue réel (`PdfBook::THEMES`, `INTERIOR_FONTS`,
+`LAYOUT_OPTIONS`) et tout est revalidé côté serveur : une proposition ne peut jamais
+produire un rendu impossible (`App\Services\LayoutStudio`).
+
 ## Longueur des chapitres
 
 **Étape 03 → Pages par chapitre.** Laissé en *auto*, le studio déduit le nombre de chapitres

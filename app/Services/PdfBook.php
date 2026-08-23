@@ -159,6 +159,36 @@ final class PdfBook
         file_put_contents($file, $pdf);
         return $file;
     }
+
+    /**
+     * PLANCHE D'APERÇU : le livre est composé en entier — donc l'aperçu est le
+     * vrai rendu, pagination du sommaire comprise — puis seules les pages
+     * demandées sont conservées. $keep contient des index de page (base 0).
+     */
+    public static function buildPreview(
+        array $project,
+        array $book,
+        array $keep,
+        string $theme = 'editorial',
+        string $accent = '#C4571F',
+        string $ink = '#1A1A17',
+        string $suffix = 'apercu'
+    ): string {
+        if (!isset(self::THEMES[$theme])) {
+            $theme = 'editorial';
+        }
+        $geometry = Layout::geometry($project);
+        $composer = new PdfComposer($geometry, $book, $project, $theme, $accent, $ink);
+        $pdf = $composer->compose($keep);
+
+        $dir = (string) Config::get('paths.exports');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        $file = $dir . '/projet-' . (int) $project['id'] . '-' . $suffix . '.pdf';
+        file_put_contents($file, $pdf);
+        return $file;
+    }
 }
 
 /**
@@ -339,7 +369,12 @@ final class PdfComposer
         return $this->opener === 'premium2' ? 'sans2r' : 'label';
     }
 
-    public function compose(): string
+    /**
+     * @param array|null $keep index de pages (base 0) à conserver — pour une
+     *        planche d'aperçu. Le livre est composé en ENTIER dans tous les cas :
+     *        l'extrait montre donc le vrai rendu, folios et sommaire paginé compris.
+     */
+    public function compose(?array $keep = null): string
     {
         // 1) Corps composé d'abord (pages de départ des chapitres connues)
         $this->pdf = $this->newPdf();
@@ -359,6 +394,9 @@ final class PdfComposer
         $frontPdf->appendPages($bodyPages);
         if (($this->pageNum + count($bodyPages['pages'])) % 2 === 1) {
             $frontPdf->addBlankPage();
+        }
+        if ($keep !== null) {
+            $frontPdf->keepPages($keep);
         }
         return $frontPdf->build();
     }
@@ -1827,6 +1865,36 @@ final class MiniPdf
         // Les glyphes utilisés voyagent avec les pages : sans eux, la table
         // /ToUnicode du document final serait amputée du corps du livre.
         return ['pages' => $pages, 'images' => $this->images, 'glyphs' => $this->usedGlyphs];
+    }
+
+    /**
+     * Ne garde que les pages demandées (index base 0), dans l'ordre donné.
+     * Les images devenues inutiles sont larguées : une planche d'aperçu ne
+     * traîne pas les photos de tout le livre.
+     */
+    public function keepPages(array $indices): void
+    {
+        if ($this->open) {
+            $this->pages[] = $this->current;
+            $this->open = false;
+        }
+        $kept = [];
+        foreach ($indices as $i) {
+            if (isset($this->pages[(int) $i])) {
+                $kept[] = $this->pages[(int) $i];
+            }
+        }
+        if (!$kept) {
+            return;   // rien de conservable : on garde le document entier
+        }
+        $this->pages = $kept;
+
+        $body = implode("\n", $kept);
+        foreach (array_keys($this->images) as $name) {
+            if (!str_contains($body, '/' . $name . ' Do')) {
+                unset($this->images[$name]);
+            }
+        }
     }
 
     public function appendPages(array $detached): void

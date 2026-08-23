@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-24 · c31';
+  const BUILD = '2026-08-24 · c32';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -212,6 +212,8 @@
       S.layoutColors = null;
       S.coverPaletteRef = null;
       S.layoutStamp = 0;
+      S.layoutProposals = null;   // propositions de mise en page : propres au livre
+      S.layoutPlanche = null;
       S.kdpMeta = null;
       S.keywordRanks = null;
       S.sectionEdit = null;
@@ -1564,6 +1566,59 @@
 
   // ── Étape 7 : mise en page ───────────────────────────────────────────────
 
+  /**
+   * GÉNÉRATION D'UNE MISE EN PAGE — le studio imagine des partis pris complets
+   * d'après vos consignes et ce que le livre contient vraiment, les essaie sur
+   * une planche de 7 pages (sommaire + 6 pages), et ne les applique au livre
+   * entier que si vous validez. Même esprit que les propositions de couverture.
+   */
+  function layoutStudioView() {
+    const props = S.layoutProposals || [];
+    const applied = S.project.layout_recipe ? safeJson(S.project.layout_recipe) : null;
+    const busy = S.busy.proposelayout;
+
+    return `
+    <div class="layout-studio">
+      <div class="title" style="margin-bottom:4px;">✨ Générer une mise en page</div>
+      <div class="sub" style="margin-bottom:12px;">
+        Le studio en imagine une d'après <strong>vos consignes</strong> et ce que contient
+        vraiment votre livre (encadrés, tableaux, longueur des sections), l'essaie sur une
+        planche de <strong>7 pages</strong> — le sommaire et 6 pages de contenu — et ne
+        l'applique au livre entier que si vous la validez.
+      </div>
+      ${applied && applied.name ? `
+      <div class="layout-applied">✓ Appliquée : <strong>${esc(applied.name)}</strong>${applied.why ? `<div class="why">${esc(applied.why)}</div>` : ''}</div>` : ''}
+
+      <button class="btn ${props.length ? 'btn-soft' : 'btn-primary'}" style="width:100%;"
+              onclick="App.proposeLayouts()" ${busy ? 'disabled' : ''}>
+        ${busy ? '<span class="spinner"></span> Le studio compose…'
+               : (props.length ? '↻ D’autres propositions' : 'Proposer des mises en page')}
+      </button>
+
+      ${props.length ? `
+      <div class="layout-props">
+        ${props.map((p, i) => `
+        <div class="layout-prop ${S.layoutPlanche && S.layoutPlanche.index === i ? 'on' : ''}">
+          <div class="top">
+            <div class="nm">${esc(p.name)}</div>
+            <div class="spec">${esc(p.summary || '')}</div>
+          </div>
+          ${p.why ? `<p class="why">${esc(p.why)}</p>` : ''}
+          <div class="acts">
+            <button class="btn btn-soft" onclick="App.showPlanche(${i})" ${S.busy.planche === i ? 'disabled' : ''}>
+              ${S.busy.planche === i ? '<span class="spinner"></span> Composition…' : '👁 Planche'}
+            </button>
+            <button class="btn btn-ghost" onclick="App.applyLayout(${i})" ${S.busy.applylayout ? 'disabled' : ''}>✓ Appliquer</button>
+          </div>
+        </div>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }
+
+  function safeJson(raw) {
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return null; }
+  }
+
   function step7View() {
     const L = S.layout;
     const theme = S.project.interior_theme || 'editorial';
@@ -1571,23 +1626,48 @@
     const pdfUrl = `api.php?r=export/pdf&id=${S.project.id}&inline=1&theme=${encodeURIComponent(theme)}&v=${S.layoutStamp || 0}`;
     const colors = S.layoutColors || { accent: '#C4571F', ink: '#1A1A17', from_cover: true };
     const coverPal = S.coverPaletteRef || {};
+
+    // Planche d'une proposition en cours d'examen : elle prend la place de
+    // l'aperçu du livre tant qu'on ne l'a pas quittée.
+    const planche = S.layoutPlanche;
+    const frameUrl = planche
+      ? `api.php?r=layout/preview-file&id=${S.project.id}&v=${planche.stamp}`
+      : pdfUrl;
+
     return `
     <div class="layout-grid">
       <div class="layout-preview">
         <div class="head">
           <div>
-            <div class="kicker">Étape 07 — Mise en page</div>
-            <div class="t">PDF réel — thème ${esc(themeName || theme)}${L ? esc(' · ' + String(L.geometry.w_mm).replace('.', ',') + ' × ' + String(L.geometry.h_mm).replace('.', ',') + ' mm') : ''}</div>
+            <div class="kicker">${planche ? 'Proposition — planche de ' + planche.pages + ' pages' : 'Étape 07 — Mise en page'}</div>
+            <div class="t">${planche
+              ? esc(planche.recipe.name) + ' · <span style="opacity:.7;">non appliquée</span>'
+              : 'PDF réel — thème ' + esc(themeName || theme) + (L ? esc(' · ' + String(L.geometry.w_mm).replace('.', ',') + ' × ' + String(L.geometry.h_mm).replace('.', ',') + ' mm') : '')}</div>
           </div>
-          <button class="btn btn-ghost" onclick="window.open('${pdfUrl}', '_blank')">Ouvrir le PDF en grand ↗</button>
+          <div style="display:flex; gap:8px;">
+            ${planche ? `<button class="btn btn-ghost" onclick="App.closePlanche()">← Aperçu du livre</button>` : ''}
+            <button class="btn btn-ghost" onclick="window.open('${frameUrl}', '_blank')">Ouvrir en grand ↗</button>
+          </div>
         </div>
         <div class="preview-frame-wrap">
-          <iframe class="preview-frame" src="${pdfUrl}#page=9&toolbar=0&navpanes=0&view=FitH" title="Aperçu du PDF intérieur"></iframe>
+          <iframe class="preview-frame" src="${frameUrl}${planche ? '#toolbar=0&navpanes=0&view=FitH' : '#page=9&toolbar=0&navpanes=0&view=FitH'}" title="Aperçu du PDF intérieur"></iframe>
         </div>
-        ${L ? `<div class="preview-caption">Aperçu = le PDF final exact (polices incorporées) · marges ${String(L.geometry.margin_top_mm).replace('.', ',')} mm · gouttière ${String(L.geometry.margin_inner_mm).replace('.', ',')} mm · dos ${esc(L.spine_label)} · ${L.geometry.pages} pages estimées</div>` : ''}
+        ${planche ? `
+        <div class="planche-bar">
+          <div class="txt">
+            <strong>${esc(planche.recipe.name)}</strong> — ${esc(planche.recipe.summary || '')}
+            ${planche.recipe.why ? `<div class="why">${esc(planche.recipe.why)}</div>` : ''}
+          </div>
+          <button class="btn btn-primary" onclick="App.applyPlanche()" ${S.busy.applylayout ? 'disabled' : ''}>
+            ${S.busy.applylayout ? '<span class="spinner"></span> Application…' : '✓ Appliquer à tout le livre'}
+          </button>
+        </div>`
+        : (L ? `<div class="preview-caption">Aperçu = le PDF final exact (polices incorporées) · marges ${String(L.geometry.margin_top_mm).replace('.', ',')} mm · gouttière ${String(L.geometry.margin_inner_mm).replace('.', ',')} mm · dos ${esc(L.spine_label)} · ${L.geometry.pages} pages estimées</div>` : '')}
       </div>
 
       <div class="layout-side">
+        ${layoutStudioView()}
+
         <div class="title">Mise en page intérieure</div>
         <div class="sub">Choisissez le style : l'aperçu ci-contre montre le PDF réel, recomposé à chaque changement. Les couleurs suivent votre couverture — ajustables ci-dessous.</div>
         <div class="cover-templates" style="margin-bottom:20px;">
@@ -3130,6 +3210,65 @@
         } catch (e) { toast(e.message, true); }
       };
       input.click();
+    },
+
+    // ── Génération d'une mise en page ────────────────────────────────────
+
+    /** Demande des partis pris complets au studio (consignes + contenu réel). */
+    async proposeLayouts() {
+      setBusy('proposelayout', true);
+      try {
+        // On dit à l'IA ce qu'elle a déjà proposé pour qu'elle change vraiment.
+        const avoid = (S.layoutProposals || []).map(p => '· ' + p.name + ' (' + p.summary + ')').join('\n');
+        const data = await Api.post('layout/propose', { id: S.project.id, count: 3, avoid });
+        S.layoutProposals = data.proposals;
+        S.layoutPlanche = null;
+        toast(data.proposals.length + ' mises en page proposées — regardez la planche avant de choisir.');
+      } catch (e) { toast(e.message, true); }
+      setBusy('proposelayout', false);
+      render();
+    },
+
+    /** Compose la planche de 7 pages d'une proposition, sans rien appliquer. */
+    async showPlanche(index) {
+      const recipe = (S.layoutProposals || [])[index];
+      if (!recipe) return;
+      S.busy.planche = index;
+      render();
+      try {
+        const data = await Api.post('layout/preview', { id: S.project.id, recipe });
+        S.layoutPlanche = { index, recipe, pages: data.pages, stamp: data.stamp };
+        window.scrollTo(0, 0);
+      } catch (e) { toast(e.message, true); }
+      S.busy.planche = null;
+      render();
+    },
+
+    closePlanche() { S.layoutPlanche = null; render(); },
+
+    /** Applique la proposition examinée dans la planche. */
+    applyPlanche() {
+      if (S.layoutPlanche) App.applyLayout(S.layoutPlanche.index);
+    },
+
+    /** Applique une proposition À TOUT LE LIVRE. */
+    async applyLayout(index) {
+      const recipe = (S.layoutProposals || [])[index];
+      if (!recipe) return;
+      setBusy('applylayout', true);
+      try {
+        const data = await Api.post('layout/apply', { id: S.project.id, recipe });
+        S.project = data.project;
+        S.layoutPlanche = null;
+        S.layoutStamp = Date.now();     // force le recalcul de l'aperçu du livre
+        // Thème coché, ingrédients et polices doivent refléter la recette :
+        // sans ça, les réglages ci-dessous mentiraient sur ce qui est appliqué.
+        await reloadInteriorThemes();
+        await loadLayout();
+        toast('« ' + data.name + ' » appliquée à tout le livre.');
+      } catch (e) { toast(e.message, true); }
+      setBusy('applylayout', false);
+      render();
     },
 
     async setInteriorTheme(slug) {

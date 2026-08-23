@@ -1017,6 +1017,68 @@ final class Router
                 $project = self::project((int) Http::in('id'), $userId);
                 Http::ok(Layout::summary($project, self::selectedConceptOrNull($project)));
 
+            // ── Génération d'une mise en page (étape 07) ──
+            // L'IA propose des partis pris complets d'après VOS CONSIGNES et le
+            // contenu réel du livre ; chacun s'essaie sur une planche de 7 pages
+            // composée par le vrai moteur PDF, et ne s'applique que si vous validez.
+            case 'layout/propose':
+                @set_time_limit(180);
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
+                self::requireWritten($book);
+                $colors = self::interiorColorsOf($project);
+                $proposals = \App\Services\LayoutStudio::propose(
+                    $project, $book, $colors,
+                    max(1, min(4, (int) (Http::in('count') ?: 3))),
+                    mb_substr(trim((string) Http::in('avoid', '')), 0, 600)
+                );
+                Http::ok([
+                    'proposals' => array_map(fn ($r) => $r + ['summary' => \App\Services\LayoutStudio::describe($r)], $proposals),
+                    'current'   => \App\Services\LayoutStudio::current($project, $colors),
+                ]);
+
+            case 'layout/preview':
+                // Compose la planche d'une proposition (sans rien enregistrer)
+                @set_time_limit(300);
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $book = Layout::bookData($project, self::selectedConceptOrNull($project), $user);
+                self::requireWritten($book);
+                $recipe = \App\Services\LayoutStudio::sanitize(
+                    (array) Http::in('recipe', []),
+                    self::interiorColorsOf($project)
+                );
+                if ($recipe === null) {
+                    Http::error('Mise en page invalide — relancez une proposition.');
+                }
+                \App\Services\LayoutStudio::preview($project, $book, $recipe);
+                Http::ok(['pages' => count(\App\Services\LayoutStudio::previewPages()), 'stamp' => time()]);
+
+            case 'layout/preview-file':
+                // Sert la planche composée juste avant (affichée dans l'aperçu)
+                $project = self::project((int) Http::in('id'), $userId);
+                $file = rtrim((string) Config::get('paths.exports'), '/')
+                    . '/projet-' . (int) $project['id'] . '-planche.pdf';
+                if (!is_file($file)) {
+                    Http::error('Aperçu introuvable — relancez la proposition.');
+                }
+                self::download($file, 'planche.pdf', 'application/pdf', true);
+
+            case 'layout/apply':
+                // Applique la mise en page retenue À TOUT LE LIVRE
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $recipe = \App\Services\LayoutStudio::sanitize(
+                    (array) Http::in('recipe', []),
+                    self::interiorColorsOf($project)
+                );
+                if ($recipe === null) {
+                    Http::error('Mise en page invalide — relancez une proposition.');
+                }
+                \App\Services\LayoutStudio::apply($project, $recipe);
+                Http::ok(['project' => self::project((int) $project['id'], $userId), 'name' => $recipe['name']]);
+
             case 'export/pdf':
                 @set_time_limit(300);
                 $project = self::project((int) Http::in('id'), $userId);
@@ -1453,6 +1515,30 @@ final class Router
         $params[] = Db::now();
         $params[] = $project['id'];
         Db::run('UPDATE projects SET ' . implode(', ', $fields) . ', updated_at = ? WHERE id = ?', $params);
+    }
+
+    /** Couleurs effectives de l'intérieur : celles du livre, sinon la couverture. */
+    private static function interiorColorsOf(array $project): array
+    {
+        $row = Db::one('SELECT palette FROM covers WHERE project_id = ?', [(int) $project['id']]);
+        $palette = $row ? (json_decode((string) $row['palette'], true) ?: []) : [];
+        return PdfBook::interiorColors($project, $palette);
+    }
+
+    /**
+     * Une mise en page ne se juge que sur du vrai texte : sans contenu rédigé,
+     * la planche d'aperçu serait vide et la proposition, du vent.
+     */
+    private static function requireWritten(array $book): void
+    {
+        foreach ($book['chapters'] as $chapter) {
+            foreach ($chapter['sections'] as $section) {
+                if (!empty($section['paragraphs'])) {
+                    return;
+                }
+            }
+        }
+        Http::error('Rédigez d\'abord le livre (étape 05) : la mise en page se juge sur le vrai texte.');
     }
 
     private static function selectedTheme(array $project): array

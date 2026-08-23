@@ -38,6 +38,9 @@ final class Migrations
         self::ensureColumn('projects', 'brief', 'MEDIUMTEXT NULL AFTER idea');
         // Pages par chapitre voulues par l'auteur (NULL = calcul automatique).
         self::ensureColumn('projects', 'pages_per_chapter', 'SMALLINT UNSIGNED NULL AFTER pages');
+        // Mise en page générée puis appliquée : {"name":"…","why":"…"} — les
+        // réglages eux-mêmes vivent dans interior_theme/layout_options/fonts.
+        self::ensureColumn('projects', 'layout_recipe', 'TEXT NULL AFTER interior_fonts');
     }
 
     private static function ensureColumn(string $table, string $column, string $definition): void

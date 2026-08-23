@@ -528,6 +528,29 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
   text-transform: uppercase; letter-spacing: .08em; }
 .custom-cover-card .fallback span { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
+/* ── Génération d'une mise en page : propositions + planche de 7 pages ──── */
+.layout-studio { margin-bottom: 24px; padding: 16px 16px 14px; border: 1px solid var(--accent);
+  border-radius: 12px; background: #FDFAF5; }
+.layout-applied { font-size: 12px; line-height: 1.5; color: var(--green); margin-bottom: 12px;
+  padding: 8px 10px; border: 1px solid rgba(31,111,92,.28); border-radius: 8px; background: #F4F9F6; }
+.layout-applied .why { color: var(--muted); margin-top: 3px; font-size: 11.5px; }
+.layout-props { display: grid; gap: 10px; margin-top: 14px; }
+.layout-prop { padding: 12px 13px; border: 1px solid var(--line); border-radius: 10px; background: #fff; min-width: 0; }
+.layout-prop.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(196,87,31,.12); }
+.layout-prop .nm { font-size: 13.5px; font-weight: 600; }
+/* Classe dédiée : le .badge global impose white-space:nowrap, qui ferait
+   déborder le panneau dès que la recette est un peu détaillée. */
+.layout-prop .spec { font-size: 10.5px; color: var(--faint); font-family: var(--mono);
+  line-height: 1.5; margin-top: 3px; overflow-wrap: anywhere; }
+.layout-prop .why { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 7px 0 0; }
+.layout-prop .acts { display: flex; gap: 8px; margin-top: 11px; }
+.layout-prop .acts .btn { flex: 1; padding: 7px 8px; font-size: 12.5px; white-space: nowrap; }
+.planche-bar { display: flex; gap: 16px; align-items: center; justify-content: space-between;
+  margin-top: 12px; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 10px;
+  background: #FDFAF5; flex-wrap: wrap; }
+.planche-bar .txt { font-size: 12.5px; line-height: 1.5; flex: 1; min-width: 240px; }
+.planche-bar .why { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
 .layout-composer { margin-bottom: 22px; padding: 16px 16px 10px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 12px; }
 .composer-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .composer-row:hover { background: #F4EDDD; }

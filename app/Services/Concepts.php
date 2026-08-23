@@ -46,7 +46,8 @@ final class Concepts
         $lang = Lang::of($project);
         $langName = Lang::promptName($lang['code']);
 
-        $prompt = "Tu es directeur éditorial spécialisé en autoédition Amazon KDP, boutique {$lang['marketplace']}.\n"
+        $prompt = Brief::block($project, 'aux 8 concepts que tu proposes')
+            . "Tu es directeur éditorial spécialisé en autoédition Amazon KDP, boutique {$lang['marketplace']}.\n"
             . "Thématique retenue : « {$theme['name']} » ({$theme['category']}).\n"
             . $ideaLine
             . $realData
@@ -67,12 +68,14 @@ final class Concepts
             . "\"Aucun concurrent FR\", \"Marge élevée\", \"Tendance +38 %\", \"Niche précise\" ;\n"
             . "- \"competition\" : Très faible | Faible | Moyenne | Forte ;\n"
             . "- \"price\" : prix broché conseillé \"12,90 €\" ;\n"
-            . "- \"pages_est\" : entier 100-260.";
+            . "- \"pages_est\" : entier 100-260."
+            . Brief::reminder($project);
 
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
-            'system'      => "Tu produis des concepts éditoriaux vendeurs et réalistes pour {$lang['marketplace']}. Tu écris exclusivement en {$langName}.",
+            'system'      => "Tu produis des concepts éditoriaux vendeurs et réalistes pour {$lang['marketplace']}. Tu écris exclusivement en {$langName}."
+                . Brief::systemLine($project),
         ]);
 
         $books = $data['books'] ?? null;

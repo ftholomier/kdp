@@ -33,6 +33,11 @@ final class Migrations
         self::ensureColumn('projects', 'lang', "VARCHAR(5) NULL AFTER tone");
         // Polices de l'intérieur choisies à l'étape 07 : {"title":"…","body":"…"}
         self::ensureColumn('projects', 'interior_fonts', 'VARCHAR(80) NULL AFTER interior_colors');
+        // CONSIGNES DE L'AUTEUR : réinjectées en tête de chaque appel à l'IA,
+        // prioritaires sur le concept et sur le plan importé (App\Services\Brief).
+        self::ensureColumn('projects', 'brief', 'MEDIUMTEXT NULL AFTER idea');
+        // Pages par chapitre voulues par l'auteur (NULL = calcul automatique).
+        self::ensureColumn('projects', 'pages_per_chapter', 'SMALLINT UNSIGNED NULL AFTER pages');
     }
 
     private static function ensureColumn(string $table, string $column, string $definition): void

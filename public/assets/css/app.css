@@ -464,6 +464,29 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .cover-swatches .lbl { font-size: 11px; color: var(--faint); margin-right: 2px; }
 .cover-swatches .sw { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
 .cover-swatches .sw.on { border-color: var(--ink); }
+/* ── Vos consignes : prioritaires sur tout le reste, visibles partout ────── */
+.brief-card { border-left: 3px solid var(--line); transition: border-color .18s ease; }
+.brief-card.on { border-left-color: var(--accent); background: #FDFAF5; }
+.brief-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+.brief-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.brief-flag { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 99px; padding: 2px 7px; font-weight: 500; }
+.brief-sub { font-size: 11.5px; line-height: 1.55; color: var(--faint); margin-top: 4px; }
+.brief-card textarea { width: 100%; font-size: 13px; line-height: 1.6; resize: vertical; }
+.brief-foot { display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  margin-top: 7px; font-size: 11.5px; }
+.brief-saved { color: var(--green); font-size: 11.5px; white-space: nowrap; }
+.brief-applied { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.brief-applied .t { font-size: 11.5px; font-weight: 600; color: var(--green); margin-bottom: 6px; }
+.brief-applied .l { font-size: 12px; line-height: 1.55; color: var(--muted); padding-left: 12px;
+  position: relative; margin-bottom: 3px; }
+.brief-applied .l::before { content: '·'; position: absolute; left: 3px; color: var(--accent); }
+.import-brief-link { margin-top: 14px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 10px; cursor: pointer; }
+.import-brief-link.on { border-style: solid; border-color: var(--accent); background: #FDFAF5; }
+.import-brief-link .t { font-size: 12.5px; font-weight: 600; }
+.import-brief-link .q { font-size: 12px; line-height: 1.55; color: var(--muted); margin-top: 5px; font-style: italic; }
+.import-brief-link .f { font-size: 11.5px; line-height: 1.5; color: var(--faint); margin-top: 6px; }
+
 .import-summary { margin-top: 14px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
 .import-summary .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 4px 0; color: var(--muted); }
 .import-modes { display: grid; gap: 8px; }

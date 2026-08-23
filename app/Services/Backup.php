@@ -20,9 +20,9 @@ final class Backup
 
     /** Colonnes de projet embarquées dans la sauvegarde (et restaurées). */
     private const PROJECT_COLUMNS = [
-        'title', 'step', 'mode', 'idea', 'pages', 'final_pages', 'photos', 'photos_per',
-        'photo_style', 'tone', 'trim_format', 'interior_theme', 'layout_options',
-        'toc_json', 'writing_status',
+        'title', 'step', 'mode', 'idea', 'brief', 'pages', 'pages_per_chapter', 'final_pages',
+        'photos', 'photos_per', 'photo_style', 'tone', 'lang', 'trim_format',
+        'interior_theme', 'layout_options', 'toc_json', 'writing_status',
     ];
 
     public static function export(array $project): array
@@ -96,19 +96,24 @@ final class Backup
         $pdo->beginTransaction();
         try {
             $projectId = Db::insert(
-                'INSERT INTO projects (user_id, title, step, mode, idea, pages, final_pages, photos, photos_per, photo_style, tone, trim_format, interior_theme, layout_options, toc_json, writing_status, created_at, updated_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                'INSERT INTO projects (user_id, title, step, mode, idea, brief, pages, pages_per_chapter, final_pages, photos, photos_per, photo_style, tone, lang, trim_format, interior_theme, layout_options, toc_json, writing_status, created_at, updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 [
                     $userId, $title,
                     max(1, min(7, (int) ($p['step'] ?? 1))),
                     in_array($p['mode'] ?? '', ['describe', 'trends'], true) ? $p['mode'] : 'describe',
                     (string) ($p['idea'] ?? ''),
+                    // Vos consignes voyagent avec le projet : une restauration
+                    // repart avec la même ligne éditoriale.
+                    Brief::clean((string) ($p['brief'] ?? '')),
                     max(24, min(828, (int) ($p['pages'] ?? 120))),
+                    empty($p['pages_per_chapter']) ? null : max(4, min(60, (int) $p['pages_per_chapter'])),
                     $p['final_pages'] !== null && $p['final_pages'] !== '' ? (int) $p['final_pages'] : null,
                     (int) !empty($p['photos']),
                     max(1, min(6, (int) ($p['photos_per'] ?? 1))),
                     in_array($p['photo_style'] ?? '', ['nb', 'couleur', 'schemas'], true) ? $p['photo_style'] : 'nb',
                     mb_substr((string) ($p['tone'] ?? ''), 0, 50),
+                    isset(Lang::LANGS[(string) ($p['lang'] ?? '')]) ? (string) $p['lang'] : null,
                     Config::get('trims.' . ($p['trim_format'] ?? '')) ? $p['trim_format'] : '6x9',
                     isset(PdfBook::THEMES[$p['interior_theme'] ?? '']) ? $p['interior_theme'] : 'editorial',
                     (string) ($p['layout_options'] ?? ''),

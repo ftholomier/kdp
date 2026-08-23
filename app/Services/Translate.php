@@ -81,15 +81,18 @@ final class Translate
         $pdo->beginTransaction();
         try {
             $newId = Db::insert(
-                'INSERT INTO projects (user_id, title, step, mode, idea, pages, final_pages, photos, photos_per, photo_style, tone, trim_format, interior_theme, layout_options, writing_status, translate_from, translate_lang, created_at, updated_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                'INSERT INTO projects (user_id, title, step, mode, idea, brief, pages, pages_per_chapter, final_pages, photos, photos_per, photo_style, tone, trim_format, interior_theme, layout_options, writing_status, translate_from, translate_lang, created_at, updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 [
                     $userId,
                     $tr('COVER_TITLE', (string) $source['title']) . ' — ' . strtoupper($langCode),
                     5, // direction l'étape 05 : la traduction s'écrit comme une rédaction
                     (string) $source['mode'],
                     (string) $source['idea'],
+                    // La version étrangère hérite des mêmes consignes d'auteur.
+                    (string) ($source['brief'] ?? ''),
                     (int) $source['pages'],
+                    $source['pages_per_chapter'] !== null ? (int) $source['pages_per_chapter'] : null,
                     $source['final_pages'] !== null ? (int) $source['final_pages'] : null,
                     (int) $source['photos'], (int) $source['photos_per'], (string) $source['photo_style'],
                     (string) $source['tone'], (string) $source['trim_format'],

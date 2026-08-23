@@ -205,7 +205,8 @@ final class Covers
         // couverture française sur un livre anglais ne se vend pas.
         $langName = Lang::promptName(Lang::codeOf($project));
 
-        $prompt = "Tu es copywriter éditorial. Rédige les textes de couverture d'un livre pratique rédigé "
+        $prompt = Brief::block($project, 'aux textes de couverture')
+            . "Tu es copywriter éditorial. Rédige les textes de couverture d'un livre pratique rédigé "
             . "en {$langName}, destiné à Amazon KDP.\n"
             . "Titre : « {$concept['title']} »\nAccroche existante : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\nTon : {$project['tone']}.\n\n"
@@ -219,13 +220,15 @@ final class Covers
             . "- \"back_text\" : 4ème de couverture, 3 courts paragraphes séparés par \\n\\n : le problème vécu "
             . "par le lecteur, la promesse du livre, ce qu'il contient concrètement (3 puces « • » possibles). "
             . "120 à 170 mots, vendeur mais crédible ;\n"
-            . "- \"bio\" : notice auteur de 2 phrases à la 3ème personne pour « " . ($user['display_name'] ?: 'l\'auteur') . " ».";
+            . "- \"bio\" : notice auteur de 2 phrases à la 3ème personne pour « " . ($user['display_name'] ?: 'l\'auteur') . " »."
+            . Brief::reminder($project);
 
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => 0.9,
             'search'      => false,
-            'system'      => "Tu écris des textes de couverture qui vendent, dans un {$langName} impeccable.",
+            'system'      => "Tu écris des textes de couverture qui vendent, dans un {$langName} impeccable."
+                . Brief::systemLine($project),
         ]);
 
         return [

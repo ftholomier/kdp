@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-24 · c30';
+  const BUILD = '2026-08-24 · c31';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -17,11 +17,6 @@
     { key: 'couleur', label: 'Couleur' },
     { key: 'schemas', label: 'Schémas seuls' }
   ];
-  // Exemples de consigne libre sur un import, selon ce qu'on en fait
-  const IMPORT_BRIEF_PLACEHOLDER = {
-    identique: 'Ex. : garder le contenu tel quel, mais viser les débutants — couverture plus douce et titre plus explicite.',
-    inspire: 'Ex. : reprends la logique du plan mais pour des recettes vegan, ajoute un chapitre sur le matériel et supprime les parties sur la congélation.'
-  };
   const IDEA_CHIPS = ['télétravail', 'parents pressés', 'sans se lever à 5 h', 'charge mentale', '21 jours'];
   const SIGNALS = [
     'Rang des ventes (BSR) des 100 premiers titres de la catégorie',
@@ -194,6 +189,7 @@
       S.writer = { status: null, journal: [], lastId: 0, looping: false, incident: null };
       S.reader = { num: 1, data: null };
       S.layout = null;
+      S.tocApplied = [];   // compte rendu des consignes : propre à un livre
       // Tout l'état lié au livre PRÉCÉDENT est vidé : couverture, propositions
       // et graine de variantes, thèmes/composeur de mise en page, métadonnées
       // KDP, rangs de mots-clés, éditions en cours. Sans cela, un livre
@@ -538,6 +534,8 @@
 
       ${langPickerView(false)}
 
+      <div style="margin-bottom:22px;">${briefCardView(true)}</div>
+
       ${mode === 'import' ? `
       <div class="idea-grid">
         <div class="card card-pad">
@@ -559,14 +557,15 @@
             <input type="text" id="import-title" value="${esc(imp.title_guess || '')}" placeholder="Titre repris sur la couverture">
           </label>
 
-          <label style="margin-top:14px; display:block;">Ce que vous voulez faire de ce livre
-            <textarea rows="3" id="import-brief" placeholder="${esc(IMPORT_BRIEF_PLACEHOLDER[S.importMode || 'identique'])}"
-                      oninput="App.setImportBrief(this.value)">${esc(S.importBrief || '')}</textarea>
-          </label>
-          <div class="faint" style="font-size:11.5px; line-height:1.5; margin-top:-2px;">
-            ${(S.importMode || 'identique') === 'identique'
-              ? 'En reprise à l’identique, votre texte n’est pas touché : cette consigne sert de ligne éditoriale à la couverture et aux métadonnées Amazon.'
-              : 'En inspiration, cette consigne <strong>retravaille le plan</strong> avant qu’il n’arrive dans le sommaire — chapitres ajoutés, retirés, réorientés.'}
+          <div class="import-brief-link ${(p.brief || '').trim() ? 'on' : ''}" onclick="App.focusBrief()">
+            ${(p.brief || '').trim() ? `
+              <div class="t">📌 Vos consignes seront appliquées à cet import</div>
+              <div class="q">« ${esc((p.brief || '').trim().slice(0, 180))}${(p.brief || '').trim().length > 180 ? '…' : ''} »</div>
+              <div class="f">${(S.importMode || 'identique') === 'identique'
+                ? 'En reprise à l’identique votre texte n’est pas touché : les consignes guident la couverture, les métadonnées et tout ce que l’IA écrira ensuite.'
+                : 'En inspiration, elles <strong>retravaillent le plan</strong> avant qu’il n’arrive dans le sommaire — chapitres ajoutés, retirés, réorientés — puis pilotent la rédaction.'}</div>`
+            : `<div class="t">📌 Dites ce que vous voulez faire de ce PDF</div>
+               <div class="f">Écrivez-le dans « Vos consignes » en haut de cette page : ce que vous gardez, ce que vous changez, ce que vous ajoutez. L’IA les suivra en priorité, ici et à toutes les étapes suivantes.</div>`}
           </div>
 
           <div style="font-size:13.5px; font-weight:600; margin:18px 0 8px;">Que voulez-vous en faire ?</div>
@@ -671,6 +670,37 @@
     </div>`;
   }
 
+  /**
+   * VOS CONSIGNES — la ligne éditoriale du livre, prioritaire sur tout le
+   * reste. Elle est réinjectée en tête de chaque appel à l'IA (sommaire,
+   * rédaction, couverture) tant qu'elle est là, à toutes les étapes.
+   */
+  function briefCardView(compact) {
+    const p = S.project;
+    const value = p.brief || '';
+    return `
+    <div class="card card-pad brief-card ${value ? 'on' : ''}" ${compact ? 'style="padding:16px 18px;"' : ''}>
+      <div class="brief-head">
+        <div>
+          <div class="brief-title">📌 Vos consignes ${value ? '<span class="brief-flag">actives</span>' : ''}</div>
+          <div class="brief-sub">Ce que l'IA doit respecter en priorité, à chaque génération : sujet imposé,
+          angle, public visé, ce qu'il faut garder du PDF importé, ce qu'il faut bannir…</div>
+        </div>
+      </div>
+      <textarea rows="${compact ? 4 : 5}" id="brief-text" placeholder="Ex. : garde les 12 recettes du PDF à l'identique et ajoute pour chacune une variante sans gluten. Ne parle jamais de perte de poids. Public : parents pressés. Chaque chapitre se termine par une liste de courses."
+                oninput="App.briefChanged(this.value)">${esc(value)}</textarea>
+      <div class="brief-foot">
+        <span class="faint">${value ? nf(value.length) + ' / 4 000 caractères · prioritaires sur le concept et sur le plan importé' : 'Facultatif — mais tout ce que vous écrivez ici prime sur le reste.'}</span>
+        <span class="brief-saved" id="brief-saved"></span>
+      </div>
+      ${(S.tocApplied || []).length ? `
+      <div class="brief-applied">
+        <div class="t">✓ Appliquées à la dernière génération du sommaire</div>
+        ${S.tocApplied.map(a => `<div class="l">${esc(a)}</div>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }
+
   function loadingCard(label) {
     return `<div class="card card-pad" style="margin-top:24px; display:flex; align-items:center; gap:14px;">
       <span class="spinner" style="display:inline-block; width:16px; height:16px; border:2px solid var(--navy); border-top-color:transparent; border-radius:99px; animation:spin .8s linear infinite;"></span>
@@ -744,7 +774,15 @@
     const p = S.project;
     const concept = S.bundle.concepts.find(c => Number(c.id) === Number(p.concept_id));
     const words = Math.round(p.pages * 285 / 100) * 100;
-    const chapterCount = S.bundle.toc.length || Math.max(6, Math.min(14, Math.round(p.pages / 20)));
+    // Pages par chapitre : vide = automatique. Un choix explicite commande le
+    // découpage, sans être rabattu sur les bornes 6-14 du mode auto.
+    const perChapter = Number(p.pages_per_chapter) > 0 ? Number(p.pages_per_chapter) : 0;
+    const autoCount = Math.max(6, Math.min(14, Math.round(p.pages / 20)));
+    const plannedCount = perChapter
+      ? Math.max(2, Math.min(40, Math.round(p.pages / perChapter)))
+      : autoCount;
+    const chapterCount = S.bundle.toc.length || plannedCount;
+    const partsPer = Math.max(3, Math.min(8, Math.round((p.pages / plannedCount) / 7)));
     const photosOn = Number(p.photos) === 1;
 
     return `
@@ -761,6 +799,27 @@
             <input type="range" min="60" max="400" step="10" value="${p.pages}" oninput="App.setPages(this.value)">
             <div class="range-scale"><span>60</span><span>≈ ${nf(words)} mots · ${chapterCount} chapitres</span><span>400</span></div>
           </div>
+
+          <div style="margin-bottom:22px;">
+            <div class="param-row-head">
+              <span>Pages par chapitre</span>
+              <span class="mono">${perChapter ? perChapter + ' p.' : 'auto (' + Math.round(p.pages / chapterCount) + ' p.)'}</span>
+            </div>
+            <input type="range" min="4" max="60" step="1" value="${perChapter || Math.round(p.pages / chapterCount)}"
+                   oninput="App.setPagesPerChapter(this.value)">
+            <div class="range-scale">
+              <span>4</span>
+              <span>${chapterCount} chapitres de ${partsPer} sous-parties</span>
+              <span>${perChapter ? `<span style="color:var(--accent); cursor:pointer;" onclick="App.setPagesPerChapter('')">↺ auto</span>` : '60'}</span>
+            </div>
+            <div class="faint" style="font-size:11.5px; line-height:1.5; margin-top:6px;">
+              ${perChapter
+                ? `Découpage imposé : ${chapterCount} chapitres d'environ ${perChapter} pages (~${nf(Math.round(perChapter * 285))} mots chacun). Le sommaire et la rédaction s'y tiennent.`
+                : 'Réglage automatique. Déplacez le curseur pour imposer la longueur de vos chapitres.'}
+            </div>
+          </div>
+
+          ${briefCardView(true)}
 
           <div class="photos-box">
             <div class="head">
@@ -2401,26 +2460,45 @@
       input.click();
     },
 
-    setImportMode(mode) {
-      // On garde la consigne déjà tapée en basculant de mode
-      const field = document.getElementById('import-brief');
-      if (field) S.importBrief = field.value;
-      S.importMode = mode;
-      render();
+    setImportMode(mode) { S.importMode = mode; render(); },
+    setImportOwned(v) { S.importOwned = !!v; render(); },
+
+    /** Amène l'auteur sur la zone « Vos consignes » et y place le curseur. */
+    focusBrief() {
+      const field = document.getElementById('brief-text');
+      if (!field) return;
+      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      field.focus();
     },
-    setImportOwned(v) {
-      const field = document.getElementById('import-brief');
-      if (field) S.importBrief = field.value;
-      S.importOwned = !!v;
-      render();
+
+    /**
+     * VOS CONSIGNES, enregistrées au fil de la frappe. Elles vivent sur le
+     * projet (et non dans un coin de l'écran) : chaque appel à l'IA les relira,
+     * à cette étape comme aux suivantes.
+     */
+    briefChanged(text) {
+      S.project.brief = text;
+      const flag = document.getElementById('brief-saved');
+      if (flag) flag.textContent = '…';
+      debounce('brief', async () => {
+        try {
+          await Api.post('projects/update', { id: S.project.id, brief: S.project.brief });
+          const el = document.getElementById('brief-saved');
+          if (el) {
+            el.textContent = '✓ enregistré';
+            setTimeout(() => { if (el.textContent === '✓ enregistré') el.textContent = ''; }, 2500);
+          }
+        } catch (e) { toast(e.message, true); }
+      }, 700);
     },
-    setImportBrief(text) { S.importBrief = text; },
 
     async applyImport() {
       if (!S.importAnalysis) return;
       const mode = S.importMode || 'identique';
       const title = (document.getElementById('import-title') || {}).value || '';
-      const brief = (document.getElementById('import-brief') || {}).value || S.importBrief || '';
+      // La consigne de l'import, c'est la consigne du livre : une seule et
+      // même chose, qui continue de s'appliquer après l'import.
+      const brief = S.project.brief || '';
       setBusy('importap', true);
       try {
         const data = await Api.post('import/apply', {
@@ -2428,14 +2506,14 @@
         });
         S.project = data.project;
         S.importAnalysis = null;
-        S.importBrief = '';
+        S.tocApplied = data.applied || [];
         await refreshProject();
         S.step = data.step;
         enterStep();
         toast(mode === 'identique'
           ? data.chapters + ' chapitres repris (' + nf(data.words) + ' mots) — à vous la couverture.'
           : (data.reworked
-            ? 'Plan retravaillé selon votre consigne : ' + data.chapters + ' chapitres — vérifiez le sommaire.'
+            ? 'Plan retravaillé selon vos consignes : ' + data.chapters + ' chapitres — vérifiez le sommaire.'
             : 'Plan importé — définissez le sommaire puis lancez la rédaction.'));
       } catch (e) { toast(e.message, true); }
       setBusy('importap', false);
@@ -2522,6 +2600,13 @@
 
     // Étape 3
     setPages(value) { S.project.pages = Number(value); pushParams(); render(); },
+    /** '' remet le découpage en automatique. */
+    setPagesPerChapter(value) {
+      const n = Number(value);
+      S.project.pages_per_chapter = value === '' || !n ? null : n;
+      pushParams();
+      render();
+    },
     togglePhotos() { S.project.photos = Number(S.project.photos) === 1 ? 0 : 1; pushParams(); render(); },
     setPhotosPer(value) { S.project.photos_per = Number(value); pushParams(); render(); },
     setPhotoStyle(key) { S.project.photo_style = key; pushParams(); render(); },
@@ -2534,10 +2619,17 @@
         const data = await Api.post('toc/generate', {
           id: S.project.id, pages: S.project.pages, photos: S.project.photos,
           photos_per: S.project.photos_per, photo_style: S.project.photo_style,
-          tone: S.project.tone, trim_format: S.project.trim_format
+          tone: S.project.tone, trim_format: S.project.trim_format,
+          brief: S.project.brief || '',
+          pages_per_chapter: S.project.pages_per_chapter || ''
         });
         S.bundle.toc = data.toc;
         S.project = data.project;
+        // Compte rendu de vos consignes : affiché sous la zone de consignes.
+        S.tocApplied = data.applied || [];
+        if (S.tocApplied.length) {
+          toast('Sommaire régénéré en suivant vos ' + S.tocApplied.length + ' consigne(s).');
+        }
       } catch (e) { toast(e.message, true); }
       setBusy('toc', false);
     },
@@ -3487,7 +3579,8 @@
     debounce('params', () => Api.post('projects/update', {
       id: S.project.id, pages: S.project.pages, photos: S.project.photos,
       photos_per: S.project.photos_per, photo_style: S.project.photo_style,
-      tone: S.project.tone, trim_format: S.project.trim_format
+      tone: S.project.tone, trim_format: S.project.trim_format,
+      pages_per_chapter: S.project.pages_per_chapter || ''
     }).catch(() => {}));
   }
 

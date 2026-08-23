@@ -220,6 +220,43 @@ l'étape 07 — où il apparaît dans la liste de conformité KDP.
 > `public/.user.ini` (PHP en CGI/FastCGI) et `.htaccess` (PHP en module Apache) ; si votre hébergeur
 > plafonne plus bas, le studio affiche la limite réelle et où la changer.
 
+## Vos consignes (prioritaires sur tout le reste)
+
+La zone **📌 Vos consignes** (étape 01 et étape 03) porte votre intention d'auteur : sujet
+imposé, angle, public visé, ce qu'il faut garder d'un PDF importé, ce qu'il faut bannir.
+Elle est enregistrée sur le livre (`projects.brief`) et **réinjectée en tête de chaque
+appel à l'IA**, à toutes les étapes et pour toujours :
+
+| Étape | Appel concerné |
+|---|---|
+| 02 Concept | les 8 livres proposés |
+| 03 Sommaire | génération et **régénération** du sommaire, chapitre ajouté à la demande |
+| 04 Couverture | sous-titre, accroche, 4ᵉ de couverture, biographie |
+| 05 Rédaction | chaque section écrite |
+| 06 Chapitres | réécriture d'une section |
+| Import PDF | le plan importé est retravaillé selon vos consignes |
+
+Le bloc envoyé au modèle est explicite : vos consignes **priment** sur le titre, le concept,
+le plan importé et les usages du genre ; seules la langue du livre et le format de réponse
+ne se négocient pas. Un rappel de vérification est ajouté en fin de prompt, et le modèle
+rend compte de ce qu'il a appliqué — affiché sous la zone de consignes (« ✓ Appliquées à la
+dernière génération du sommaire ») et tracé dans le journal du projet.
+
+Les consignes suivent le livre partout : duplication, sauvegarde/restauration JSON et
+traduction les emportent avec elles (`App\Services\Brief`).
+
+## Longueur des chapitres
+
+**Étape 03 → Pages par chapitre.** Laissé en *auto*, le studio déduit le nombre de chapitres
+du nombre de pages (6 à 14 chapitres, ~20 pages chacun). Dès que vous déplacez le curseur,
+c'est **votre** découpage qui commande, sans être rabattu sur ces bornes : 200 pages en
+chapitres de 40 pages donnent 5 chapitres de ~11 400 mots.
+
+Le nombre de sous-parties suit la longueur du chapitre (3 pour ~20 pages, jusqu'à 8 pour un
+gros chapitre), et le calibre est répercuté partout : prompt du sommaire, mots visés par
+chapitre, mots visés par section à la rédaction. Les sous-parties que vous ajoutez ou
+retirez à la main dans le sommaire sont créées **telles quelles** à la validation.
+
 ## Langue du livre
 
 Un livre a **une** langue, et tout le studio la suit — métadonnées Amazon (sous-titre,

@@ -105,7 +105,7 @@ final class Writer
         Util::journal($projectId, 'ok', $label . ' · section ' . $section['num'] . ' — terminée (' . Util::nf($words) . ' mots)');
 
         // Cohérence longueur vs sommaire
-        $target = (int) round($section['target_words'] / max(1, (int) Config::get('writing.sections_per_chapter', 3)));
+        $target = (int) round($section['target_words'] / self::sectionsIn((int) $section['chap_id']));
         if ($target > 0 && abs($words - $target) / $target > 0.45) {
             Util::journal($projectId, 'dim', 'Longueur hors cible (' . Util::nf($words) . ' vs ' . Util::nf($target) . ' mots) — sera rééquilibrée');
         } else {
@@ -255,12 +255,14 @@ final class Writer
         $calloutRule = "Encadrés : conserve la SYNTAXE EXACTE si tu en utilises —\n:::conseil\nTexte…\n:::\n"
             . "(types autorisés : retenir, chiffre, conseil, exemple, faq, attention). Aucune autre mise en forme, pas de titres markdown.";
 
-        $prompt = "Tu es directeur littéraire. Voici une section du chapitre « {$section['chapter_title']} » "
+        $prompt = Brief::block($project, 'cette réécriture')
+            . "Tu es directeur littéraire. Voici une section du chapitre « {$section['chapter_title']} » "
             . "(section « {$section['title']} ») d'un livre pratique rédigé en {$langName}, ton « {$project['tone']} ».\n\n"
             . "TEXTE ACTUEL :\n---\n" . $current . "\n---\n\n"
-            . "CONSIGNE DE L'AUTEUR (prioritaire) : « {$instruction} »\n\n"
-            . "Réécris la section en appliquant précisément cette consigne, en conservant ce qui fonctionne, "
-            . "le même ton et une longueur comparable sauf si la consigne en décide autrement.\n"
+            . "DEMANDE PONCTUELLE SUR CETTE SECTION (prioritaire) : « {$instruction} »\n\n"
+            . "Réécris la section en appliquant précisément cette demande, sans jamais contredire les "
+            . "consignes générales de l'auteur, en conservant ce qui fonctionne, le même ton et une "
+            . "longueur comparable sauf si la demande en décide autrement.\n"
             . $calloutRule . "\n"
             . "Réponds UNIQUEMENT avec le texte réécrit de la section, sans commentaire ni titre.";
 
@@ -269,7 +271,8 @@ final class Writer
             'temperature' => 0.7,
             'timeout'     => 75,
             'retries'     => 0,
-            'system'      => "Tu réécris des sections de livres pratiques impeccables, en {$langName}.",
+            'system'      => "Tu réécris des sections de livres pratiques impeccables, en {$langName}."
+                . Brief::systemLine($project),
         ]));
         if (Util::wordCount($text) < 60) {
             throw new \RuntimeException('Réécriture trop courte — reformulez la consigne et relancez.');
@@ -398,8 +401,10 @@ final class Writer
     private static function writeSectionOriginal(array $project, ?array $concept, array $section): string
     {
         $projectId = (int) $project['id'];
-        $sectionsPer = max(1, (int) Config::get('writing.sections_per_chapter', 3));
-        $targetWords = max(250, (int) round($section['target_words'] / $sectionsPer));
+        // La cible d'une section, c'est la longueur du chapitre divisée par son
+        // NOMBRE RÉEL de sections — un chapitre long découpé en 6 sous-parties
+        // ne demande pas six fois la longueur d'une section de chapitre court.
+        $targetWords = max(250, (int) round($section['target_words'] / self::sectionsIn((int) $section['chap_id'])));
 
         $toc = Toc::draft($project);
         $tocText = '';
@@ -453,7 +458,8 @@ final class Writer
             ? "CHAPITRE EN COURS : « {$section['chapter_title']} »\n"
             : mb_strtoupper($section['chapter_title']) . " du livre\n";
 
-        $prompt = "LIVRE : « {$bookTitle} »" . ($hook ? " — {$hook}" : '') . "\n"
+        $prompt = Brief::block($project, 'cette section')
+            . "LIVRE : « {$bookTitle} »" . ($hook ? " — {$hook}" : '') . "\n"
             . ($promise ? "PROMESSE : {$promise}\n" : '')
             . "SOMMAIRE COMPLET (entre l'introduction et la conclusion) :\n{$tocText}"
             . $chapterLine
@@ -471,13 +477,15 @@ final class Writer
             . $calloutRule
             . "- en dehors des encadrés ci-dessus : AUCUN titre, AUCUN markdown (pas de #, pas de **), aucune numérotation ;\n"
             . "- ne conclus pas le livre" . ($role === 'conclusion' ? " avant la dernière section" : '') . ", ne résume pas la section : enchaîne naturellement ;\n"
-            . "- contenu concret : exemples, chiffres plausibles, mises en situation, pas de généralités creuses.";
+            . "- contenu concret : exemples, chiffres plausibles, mises en situation, pas de généralités creuses."
+            . Brief::reminder($project);
 
         return trim(Gemini::text($prompt, [
             'model'       => 'pro',
             'temperature' => (float) Config::get('gemini.temperature_writing', 0.8),
             'system'      => "Tu es un auteur professionnel de livres pratiques, tu écris exclusivement en {$langName}. "
-                . "Tu écris un texte fluide, précis, sans remplissage, prêt à être imprimé.",
+                . "Tu écris un texte fluide, précis, sans remplissage, prêt à être imprimé."
+                . Brief::systemLine($project),
         ]));
     }
 
@@ -496,6 +504,13 @@ final class Writer
             [$projectId, $num]
         );
         return $labels['chapter'] . ' ' . ((int) ($row['n'] ?? 0) + 1);
+    }
+
+    /** Nombre de sections réellement prévues dans un chapitre (jamais 0). */
+    private static function sectionsIn(int $chapterId): int
+    {
+        $row = Db::one('SELECT COUNT(*) AS n FROM sections WHERE chapter_id = ?', [$chapterId]);
+        return max(1, (int) ($row['n'] ?? 1));
     }
 
     private static function duplicateParagraphs(int $chapterId): int

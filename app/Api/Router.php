@@ -159,19 +159,24 @@ final class Router
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
                 $newId = Db::insert(
-                    'INSERT INTO projects (user_id, title, step, mode, idea, pages, photos, photos_per, photo_style, tone, trim_format, interior_theme, layout_options, created_at, updated_at)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    'INSERT INTO projects (user_id, title, step, mode, idea, brief, pages, pages_per_chapter, photos, photos_per, photo_style, tone, lang, trim_format, interior_theme, layout_options, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     [
                         $userId,
                         mb_substr((string) $project['title'] . ' — copie', 0, 250),
                         1,
                         (string) $project['mode'],
                         '',
+                        // La copie garde la MÊME recette : vos consignes, le
+                        // calibre des chapitres et la langue en font partie.
+                        (string) ($project['brief'] ?? ''),
                         (int) $project['pages'],
+                        $project['pages_per_chapter'] !== null ? (int) $project['pages_per_chapter'] : null,
                         (int) $project['photos'],
                         (int) $project['photos_per'],
                         (string) $project['photo_style'],
                         (string) $project['tone'],
+                        $project['lang'] ?? null,
                         (string) $project['trim_format'],
                         (string) ($project['interior_theme'] ?? 'editorial'),
                         $project['layout_options'] ?? null,
@@ -278,7 +283,13 @@ final class Router
                 self::updateProject((int) $project['id'], $userId); // applique pages/photos/ton/format envoyés
                 $project = self::project((int) $project['id'], $userId);
                 $concept = self::bookContext($project);
-                Http::ok(['toc' => Toc::generate($project, $concept), 'project' => $project]);
+                $generated = Toc::generate($project, $concept);
+                Http::ok([
+                    'toc'     => $generated['toc'],
+                    // Compte rendu de VOS consignes, affiché sous la zone de consignes.
+                    'applied' => $generated['applied'],
+                    'project' => $project,
+                ]);
 
             case 'toc/save':
                 Http::requirePost();
@@ -1396,7 +1407,11 @@ final class Router
             'step'        => fn ($v) => max(1, min(7, (int) $v)),
             'mode'        => fn ($v) => in_array($v, ['describe', 'trends', 'import'], true) ? $v : 'describe',
             'idea'        => fn ($v) => (string) $v,
+            // VOS CONSIGNES : prioritaires sur tout le reste dans chaque appel IA.
+            'brief'       => fn ($v) => \App\Services\Brief::clean((string) $v),
             'pages'       => fn ($v) => max(60, min(400, (int) $v)),
+            // Pages par chapitre : 0 / vide = découpage automatique.
+            'pages_per_chapter' => fn ($v) => ($v === '' || $v === null || (int) $v <= 0) ? null : max(4, min(60, (int) $v)),
             'final_pages' => fn ($v) => ($v === '' || $v === null || (int) $v <= 0) ? null : max(24, min(828, (int) $v)),
             'photos'      => fn ($v) => $v ? 1 : 0,
             'photos_per'  => fn ($v) => max(1, min(6, (int) $v)),

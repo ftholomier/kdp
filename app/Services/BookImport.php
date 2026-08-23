@@ -286,18 +286,34 @@ final class BookImport
             }
         }
 
+        // Le calibre voulu par l'auteur commande aussi le plan retravaillé.
+        $shape = Toc::planFor($project);
+        $sizeLine = $shape['manual']
+            ? "L'auteur veut {$shape['chapters']} chapitres d'environ " . round($shape['pages_each']) . " pages : "
+              . "respecte ce découpage, avec {$shape['parts']} sous-parties par chapitre.\n"
+            : "Garde 6 à 16 chapitres, 2 à 4 sous-parties chacun.\n";
+
         try {
             $data = Gemini::json(
-                "Voici le plan d'un livre existant, importé pour servir de POINT DE DÉPART à un nouveau livre.\n"
+                "══════ CONSIGNES DE L'AUTEUR — PRIORITÉ ABSOLUE ══════\n{$brief}\n"
+                . "═════════════════════════════════════════════════════\n"
+                . "Elles commandent ce plan : elles priment sur le livre importé, sur son titre et sur "
+                . "l'ordre de ses chapitres. Applique-les littéralement, point par point.\n\n"
+                . "Voici le plan d'un livre existant, importé pour servir de POINT DE DÉPART à un nouveau livre.\n"
                 . "Titre actuel : « {$title} »\n\nPLAN ACTUEL :\n{$plan}\n"
-                . "CONSIGNE DE L'AUTEUR — c'est elle qui commande :\n« {$brief} »\n\n"
-                . "Retravaille le plan pour qu'il réponde exactement à cette consigne : ajoute, retire, fusionne, "
-                . "réordonne ou reformule les chapitres autant que nécessaire. Garde 6 à 16 chapitres, "
-                . "2 à 4 sous-parties chacun, des titres concrets et vendeurs, TOUT en {$langName}.\n"
+                . "Retravaille le plan pour qu'il réponde exactement aux consignes ci-dessus : ajoute, retire, "
+                . "fusionne, réordonne ou reformule les chapitres autant que nécessaire — le plan d'origine n'est "
+                . "qu'une matière première, pas un modèle à préserver.\n"
+                . $sizeLine
+                . "Titres concrets et vendeurs, TOUT en {$langName}.\n"
                 . 'Réponds UNIQUEMENT en JSON : {"title":"titre du nouveau livre",'
-                . '"chapters":[{"title":"…","parts":["…","…","…"]}]}',
+                . '"chapters":[{"title":"…","parts":["…","…","…"]}],"applied":["…"]}' . "\n"
+                . "\"applied\" : une ligne par consigne, disant comment tu l'as appliquée au plan.\n"
+                . "VÉRIFICATION AVANT DE RÉPONDRE : relis les consignes et contrôle que le plan les applique "
+                . "réellement, une par une.",
                 ['model' => 'fast', 'temperature' => 0.7, 'timeout' => 90, 'retries' => 1,
-                 'system' => "Tu es directeur de collection. Tu structures des livres pratiques en {$langName}."]
+                 'system' => "Tu es directeur de collection. Tu structures des livres pratiques en {$langName}. "
+                     . "L'auteur t'a donné des consignes explicites : tu les suis à la lettre."]
             );
         } catch (\Throwable $e) {
             Util::journal((int) $project['id'], 'warn',
@@ -318,13 +334,18 @@ final class BookImport
                     $parts[] = $part;
                 }
             }
-            $out[] = ['title' => $chapterTitle, 'parts' => array_slice($parts, 0, 4)];
+            $out[] = ['title' => $chapterTitle, 'parts' => array_slice($parts, 0, 8)];
         }
-        if (count($out) < 4) {
+        // Un plan à 2 chapitres reste valable si c'est ce que l'auteur a demandé.
+        if (count($out) < 2) {
             return null;
         }
         $newTitle = mb_substr(trim((string) ($data['title'] ?? '')), 0, 250);
-        return ['toc' => array_slice($out, 0, 16), 'title' => $newTitle !== '' ? $newTitle : $title];
+        return [
+            'toc'     => array_slice($out, 0, 40),
+            'title'   => $newTitle !== '' ? $newTitle : $title,
+            'applied' => Brief::report($data),
+        ];
     }
 
     /**
@@ -355,11 +376,15 @@ final class BookImport
         // Consigne + mode inspiration : le plan est retravaillé selon votre
         // demande avant d'atterrir dans le sommaire (titre du livre compris).
         $reworked = false;
+        $applied = [];
         if (!$identical && $brief !== '') {
-            $adapted = self::rework($project, $toc, $title, $brief);
+            // La consigne est relue depuis le projet à jour : elle vient d'y être
+            // enregistrée et c'est elle qui commandera aussi les étapes suivantes.
+            $adapted = self::rework($project + ['brief' => $brief], $toc, $title, $brief);
             if ($adapted) {
                 $toc = $adapted['toc'];
                 $title = $adapted['title'];
+                $applied = $adapted['applied'];
                 $reworked = true;
             }
         }
@@ -390,13 +415,14 @@ final class BookImport
 
             $pages = max(24, (int) round($analysis['words_total'] / (int) Config::get('writing.words_per_page', 285)));
             Db::run(
-                'UPDATE projects SET title = ?, idea = ?, toc_json = ?, pages = ?, writing_status = ?, step = ?, mode = \'describe\', updated_at = ? WHERE id = ?',
+                'UPDATE projects SET title = ?, brief = ?, idea = ?, toc_json = ?, pages = ?, writing_status = ?, step = ?, mode = \'describe\', updated_at = ? WHERE id = ?',
                 [
                     $title,
-                    // Ligne éditoriale du projet : votre consigne si vous en avez
-                    // donné une, sinon le simple constat de l'import.
-                    ($brief !== '' ? $brief . "\n\n" : '')
-                        . 'Livre importé depuis un PDF existant — ' . count($chapters) . ' chapitres, '
+                    // VOS CONSIGNES : champ à part entière, réinjecté en tête de
+                    // chaque appel à l'IA jusqu'à la fin du parcours. Avant, elles
+                    // finissaient noyées dans « idée » et le sommaire les oubliait.
+                    $brief,
+                    'Livre importé depuis un PDF existant — ' . count($chapters) . ' chapitres, '
                         . Util::nf($analysis['words_total']) . ' mots.',
                     json_encode($toc, JSON_UNESCAPED_UNICODE),
                     min(828, $pages),
@@ -431,14 +457,18 @@ final class BookImport
                 ? 'Livre importé À L\'IDENTIQUE : ' . count($chapters) . ' chapitres, ' . Util::nf($analysis['words_total'])
                   . ' mots repris — direction la couverture et la mise en page.'
                 : 'Plan importé pour INSPIRATION : ' . count($toc) . ' chapitres — le contenu sera écrit par l\'IA.')
-            . ($brief !== '' ? ' Consigne retenue : « ' . mb_substr($brief, 0, 160) . ' »' : '')
-            . ($reworked ? ' · plan retravaillé selon votre consigne' : '')
+            . ($brief !== '' ? ' Consignes retenues : « ' . mb_substr($brief, 0, 160) . ' »' : '')
+            . ($reworked ? ' · plan retravaillé selon vos consignes' : '')
         );
+        if ($applied) {
+            Util::journal($projectId, 'ok', 'Vos consignes appliquées au plan : ' . implode(' · ', $applied));
+        }
         return [
             'step'     => $identical ? 4 : 3,   // là où l'on vous emmène
             'chapters' => $identical ? count($chapters) : count($toc),
             'words'    => $analysis['words_total'],
             'reworked' => $reworked,
+            'applied'  => $applied,
             'title'    => $title,
         ];
     }

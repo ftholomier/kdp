@@ -14,19 +14,67 @@ use App\Core\Util;
  */
 final class Toc
 {
-    public static function chapterCountFor(int $pages): int
+    /**
+     * Pages par chapitre VOULUES par l'auteur, ou null s'il laisse faire.
+     * C'est un choix explicite : quand il est posé, il commande le découpage.
+     */
+    public static function perChapterOf(array $project): ?int
+    {
+        $value = (int) ($project['pages_per_chapter'] ?? 0);
+        return $value > 0 ? max(4, min(60, $value)) : null;
+    }
+
+    public static function chapterCountFor(int $pages, ?int $perChapter = null): int
     {
         $w = Config::get('writing');
+        if ($perChapter !== null && $perChapter > 0) {
+            // Choix explicite : on le respecte tel quel. Les bornes 6–14 du mode
+            // automatique n'ont pas à contredire une demande de l'auteur.
+            return max(2, min(40, (int) round($pages / $perChapter)));
+        }
         return max(
             (int) $w['min_chapters'],
             min((int) $w['max_chapters'], (int) round($pages / (int) $w['pages_per_chapter']))
         );
     }
 
+    /**
+     * Nombre de sous-parties d'un chapitre, proportionné à sa longueur : un
+     * chapitre de 40 pages ne se tient pas en 3 sous-parties. Calibré pour
+     * rendre 3 sur le réglage par défaut (20 pages), donc sans rien changer
+     * aux livres existants.
+     */
+    public static function partsCountFor(float $pagesPerChapter): int
+    {
+        return max(3, min(8, (int) round($pagesPerChapter / 7)));
+    }
+
+    /** Découpage effectif du livre : chapitres, pages et sous-parties par chapitre. */
+    public static function planFor(array $project): array
+    {
+        $pages = (int) $project['pages'];
+        $perChapter = self::perChapterOf($project);
+        $count = self::chapterCountFor($pages, $perChapter);
+        $pagesEach = $count > 0 ? $pages / $count : 20.0;
+        return [
+            'chapters'   => $count,
+            'pages_each' => $pagesEach,
+            'words_each' => (int) round($pagesEach * (int) Config::get('writing.words_per_page', 285)),
+            'parts'      => self::partsCountFor($pagesEach),
+            'manual'     => $perChapter !== null,
+        ];
+    }
+
+    /**
+     * @return array{toc:array,applied:array} le sommaire et, si l'auteur a donné
+     *         des consignes, le compte rendu de leur application.
+     */
     public static function generate(array $project, array $concept): array
     {
         $pages = (int) $project['pages'];
-        $count = self::chapterCountFor($pages);
+        $plan = self::planFor($project);
+        $count = $plan['chapters'];
+        $partsPer = $plan['parts'];
         $words = $pages * (int) Config::get('writing.words_per_page', 285);
         $photos = !empty($project['photos']);
         $photosPer = (int) $project['photos_per'];
@@ -40,26 +88,42 @@ final class Toc
         // sur un livre anglais — la langue en cours prime, toujours.
         $langName = Lang::promptName(Lang::codeOf($project));
 
-        $prompt = "Tu es directeur éditorial. Construis le sommaire d'un livre pratique rédigé en {$langName}, pour Amazon KDP.\n"
+        // Le format de chapitre demandé par l'auteur, dit noir sur blanc.
+        $sizeLine = $plan['manual']
+            ? "DÉCOUPAGE IMPOSÉ PAR L'AUTEUR : {$count} chapitres d'environ "
+              . round($plan['pages_each']) . " pages chacun (~" . Util::nf($plan['words_each']) . " mots par chapitre). "
+              . "Ce nombre de chapitres n'est pas négociable : calibre l'ampleur de chaque chapitre "
+              . "pour qu'il tienne vraiment cette longueur.\n"
+            : "Découpage : {$count} chapitres d'environ " . round($plan['pages_each']) . " pages "
+              . "(~" . Util::nf($plan['words_each']) . " mots par chapitre).\n";
+
+        $prompt = Brief::block($project, 'la structure et aux titres de ce sommaire')
+            . "Tu es directeur éditorial. Construis le sommaire d'un livre pratique rédigé en {$langName}, pour Amazon KDP.\n"
             . "TOUS les titres que tu produis sont EN {$langName}.\n"
             . "Titre : « {$concept['title']} »\n"
             . "Accroche : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\n"
-            . "Ton : {$project['tone']}. Longueur cible : {$pages} pages (~" . Util::nf($words) . " mots).\n\n"
+            . "Ton : {$project['tone']}. Longueur cible : {$pages} pages (~" . Util::nf($words) . " mots).\n"
+            . $sizeLine . "\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
-            . '{"chapters":[{"title":"...","parts":["...","...","..."]' . ($photos ? ',"visuals":[{"caption":"...","desc":"..."}]' : '') . '}]}' . "\n"
+            . '{"chapters":[{"title":"...","parts":["...","...","..."]' . ($photos ? ',"visuals":[{"caption":"...","desc":"..."}]' : '') . '}]'
+            . Brief::reportField($project) . '}' . "\n"
             . "Contraintes :\n"
             . "- exactement {$count} chapitres, progression logique du problème à la maîtrise ;\n"
             . "- \"title\" : titre de chapitre évocateur, sans numérotation (max 70 caractères) ;\n"
-            . "- \"parts\" : exactement 3 sous-parties courtes (3 à 6 mots chacune) ;\n"
+            . "- \"parts\" : exactement {$partsPer} sous-parties courtes (3 à 6 mots chacune), "
+            . "qui couvrent ensemble les " . round($plan['pages_each']) . " pages du chapitre ;\n"
             . $visualSpec
-            . "- aucun texte hors du JSON.";
+            . Brief::reportRule($project)
+            . "- aucun texte hors du JSON."
+            . Brief::reminder($project);
 
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
             'search'      => false,
-            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}.",
+            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}."
+                . Brief::systemLine($project),
         ]);
 
         $chapters = $data['chapters'] ?? null;
@@ -69,7 +133,7 @@ final class Toc
 
         $toc = [];
         foreach (array_slice(array_values($chapters), 0, $count) as $chapter) {
-            $parts = array_slice(array_values((array) ($chapter['parts'] ?? [])), 0, 3);
+            $parts = array_slice(array_values((array) ($chapter['parts'] ?? [])), 0, $partsPer);
             $entry = [
                 'title' => mb_substr(trim((string) ($chapter['title'] ?? 'Chapitre')), 0, 250),
                 'parts' => array_map(fn ($p) => mb_substr(trim((string) $p), 0, 120), $parts ?: ['Ouverture', 'Développement', 'Mise en pratique']),
@@ -85,7 +149,13 @@ final class Toc
         }
 
         self::saveDraft((int) $project['id'], $toc);
-        return $toc;
+
+        $applied = Brief::report($data);
+        if ($applied) {
+            Util::journal((int) $project['id'], 'ok',
+                'Sommaire régénéré selon vos consignes : ' . implode(' · ', $applied));
+        }
+        return ['toc' => $toc, 'applied' => $applied];
     }
 
     public static function saveDraft(int $projectId, array $toc): void
@@ -124,8 +194,12 @@ final class Toc
             return;
         }
         $wordsTotal = (int) $project['pages'] * (int) Config::get('writing.words_per_page', 285);
-        $perChapter = (int) round($wordsTotal / count($toc));
-        $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
+        // Longueur visée par chapitre : celle demandée par l'auteur s'il a fixé
+        // un nombre de pages par chapitre, sinon la part égale du total.
+        $manualPer = self::perChapterOf($project);
+        $perChapter = $manualPer !== null
+            ? $manualPer * (int) Config::get('writing.words_per_page', 285)
+            : (int) round($wordsTotal / count($toc));
 
         \App\Core\Migrations::run();
         $pdo = Db::pdo();
@@ -153,11 +227,20 @@ final class Toc
                     "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
                     [$projectId, $num, 'chapter', $chapter['title'], $perChapter]
                 );
-                $parts = $chapter['parts'] ?? [];
-                for ($s = 1; $s <= $sectionsPer; $s++) {
+                // Les sections SONT les sous-parties du sommaire, telles que vous
+                // les avez laissées : celles ajoutées à la main ne sont plus
+                // ignorées (avant, tout ce qui dépassait la 3ème était perdu).
+                $parts = array_values(array_filter(
+                    array_map(fn ($p) => trim((string) $p), (array) ($chapter['parts'] ?? [])),
+                    fn ($p) => $p !== ''
+                ));
+                if (count($parts) < 2) {
+                    $parts = ['Ouverture', 'Développement', 'Mise en pratique'];
+                }
+                foreach (array_slice($parts, 0, 10) as $s => $partTitle) {
                     Db::run(
                         'INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')',
-                        [$chapterId, $s, $parts[$s - 1] ?? ('Partie ' . $s)]
+                        [$chapterId, $s + 1, mb_substr($partTitle, 0, 250)]
                     );
                 }
                 foreach (($chapter['visuals'] ?? []) as $slotIndex => $visual) {
@@ -209,7 +292,8 @@ final class Toc
             throw new \RuntimeException('Décrivez le chapitre souhaité (ex. : « un chapitre sur 50 recettes originales »).');
         }
         $projectId = (int) $project['id'];
-        $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
+        // Le chapitre ajouté suit le même calibre que les autres.
+        $sectionsPer = self::planFor($project)['parts'];
         $photos = !empty($project['photos']);
         $photosPer = (int) $project['photos_per'];
 
@@ -228,7 +312,8 @@ final class Toc
             ? ",\"visuals\":[{\"caption\":\"légende courte\",\"desc\":\"contenu précis du visuel\"}] (exactement {$photosPer} entrées)"
             : '';
         $langName = Lang::promptName(Lang::codeOf($project));
-        $prompt = "Tu es directeur éditorial. Un livre pratique rédigé en {$langName} est en cours :\n"
+        $prompt = Brief::block($project, 'à ce nouveau chapitre')
+            . "Tu es directeur éditorial. Un livre pratique rédigé en {$langName} est en cours :\n"
             . 'Titre : « ' . ($concept['title'] ?? $project['title']) . " »\n"
             . "Ton : {$project['tone']}.\n"
             . 'Chapitres existants : ' . ($existing ? '« ' . implode(' » · « ', array_slice($existing, 0, 20)) . ' »' : 'aucun') . "\n\n"
@@ -238,13 +323,15 @@ final class Toc
             . '"parts":["...","...","..."] (exactement ' . $sectionsPer . ' sous-parties courtes de 3 à 6 mots)'
             . $visualSpec . '}' . "\n"
             . "Le chapitre doit répondre exactement à la demande de l'auteur, dans le ton du livre, "
-            . "sans doublonner les chapitres existants. Titre et sous-parties EN {$langName}.";
+            . "sans doublonner les chapitres existants. Titre et sous-parties EN {$langName}."
+            . Brief::reminder($project);
 
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => 0.8,
             'search'      => false,
-            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}.",
+            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}."
+                . Brief::systemLine($project),
         ]);
         $title = mb_substr(trim((string) ($data['title'] ?? '')), 0, 250);
         if ($title === '') {
@@ -289,9 +376,13 @@ final class Toc
     {
         $projectId = (int) $project['id'];
         $title = mb_substr(trim((string) ($entry['title'] ?? 'Chapitre')), 0, 250);
-        $sectionsPer = (int) Config::get('writing.sections_per_chapter', 3);
-        $parts = array_slice(array_values((array) ($entry['parts'] ?? [])), 0, $sectionsPer);
-        while (count($parts) < $sectionsPer) {
+        $sectionsPer = self::planFor($project)['parts'];
+        $parts = array_values(array_filter(
+            array_map(fn ($p) => trim((string) $p), (array) ($entry['parts'] ?? [])),
+            fn ($p) => $p !== ''
+        ));
+        $parts = array_slice($parts, 0, 10);
+        while (count($parts) < min(3, $sectionsPer)) {
             $parts[] = 'Partie ' . (count($parts) + 1);
         }
         $visuals = array_values((array) ($entry['visuals'] ?? []));

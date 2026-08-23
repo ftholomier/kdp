@@ -485,6 +485,21 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .custom-cover-card .wrap { display: block; width: 100%; border-radius: 4px; cursor: zoom-in;
   box-shadow: 0 8px 24px rgba(48,40,26,.22); }
 .custom-cover-card .fallback { padding: 26px; text-align: center; font-size: 12.5px; color: var(--faint); }
+.custom-cover-card .verdict { margin: 4px 0 12px; padding: 11px 13px; border-radius: 9px; font-size: 12px; line-height: 1.55; }
+.custom-cover-card .verdict.ok { background: #EEF5EE; border: 1px solid #CFE0CF; color: #2C4A28; }
+.custom-cover-card .verdict.attention, .custom-cover-card .verdict.inconnu {
+  background: #FDF3E4; border: 1px solid #E9C9A0; color: #6B4415; }
+.custom-cover-card .verdict .v { font-weight: 600; margin-bottom: 3px; }
+.custom-cover-card .verdict .dims { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px;
+  font-size: 11.5px; opacity: .9; }
+.custom-cover-card .panels { margin-top: 14px; }
+.custom-cover-card .panels .lbl { font-size: 11.5px; color: var(--faint); margin-bottom: 7px; }
+.custom-cover-card .panels .strip { display: flex; align-items: flex-end; justify-content: center; gap: 12px; }
+.custom-cover-card .panels figure { margin: 0; min-width: 0; text-align: center; }
+.custom-cover-card .panels img { height: 190px; width: auto; max-width: 100%; border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(48,40,26,.18); }
+.custom-cover-card .panels figcaption { font-size: 10.5px; color: var(--fainter); margin-top: 5px;
+  text-transform: uppercase; letter-spacing: .08em; }
 .custom-cover-card .fallback span { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 .layout-composer { margin-bottom: 22px; padding: 16px 16px 10px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 12px; }

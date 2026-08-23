@@ -185,9 +185,7 @@ final class Router
                 Http::requirePost();
                 @set_time_limit(180);
                 $file = $_FILES['file'] ?? null;
-                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                    Http::error('Fichier de sauvegarde manquant.');
-                }
+                self::checkUpload($file, 'Fichier de sauvegarde');
                 $data = json_decode((string) file_get_contents($file['tmp_name']), true);
                 if (!is_array($data)) {
                     Http::error('Fichier illisible : ce n\'est pas une sauvegarde Tirage.');
@@ -487,50 +485,85 @@ final class Router
                 @set_time_limit(120);
                 $project = self::project((int) ($_POST['id'] ?? 0), $userId);
                 $file = $_FILES['file'] ?? null;
-                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                    Http::error('Fichier manquant.');
-                }
+                self::checkUpload($file);
                 $ext = strtolower((string) pathinfo((string) $file['name'], PATHINFO_EXTENSION));
                 if (!in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
-                    Http::error('Formats acceptés : PDF (broché complet) ou JPG/PNG (1ère de couverture).');
+                    Http::error('Formats acceptés : PDF ou JPG/PNG — la planche complète (4ème + dos + 1ère) ou la seule 1ère de couverture.');
                 }
-                $kind = $ext === 'pdf' ? 'wrap' : 'front';
-                $dest = CoverStudio::customCoverPath((int) $project['id'], $kind);
-                if (!move_uploaded_file($file['tmp_name'], $dest) && !copy($file['tmp_name'], $dest)) {
+                // On repart d'une ardoise propre : une couverture importée en
+                // remplace une autre, panneaux et PDF fabriqués compris.
+                CoverStudio::clearCustom((int) $project['id']);
+                $tmp = (string) Config::get('paths.uploads') . '/cover-upload-' . (int) $project['id'] . '.' . ($ext === 'pdf' ? 'pdf' : 'img');
+                if (!move_uploaded_file($file['tmp_name'], $tmp) && !copy($file['tmp_name'], $tmp)) {
                     Http::error('Impossible d\'enregistrer le fichier.');
                 }
-                if ($kind === 'front') {
-                    $info = @getimagesize($dest);
-                    if (!$info) {
-                        @unlink($dest);
+
+                $pages = Layout::summary($project, null)['geometry']['pages'];
+                $label = '';
+
+                if ($ext === 'pdf') {
+                    // PLANCHE PDF : conservée telle quelle, c'est elle qui part sur KDP.
+                    $size = \App\Services\CoverImport::readPdf($tmp);
+                    if (!$size) {
+                        @unlink($tmp);
+                        Http::error('PDF illisible.');
+                    }
+                    rename($tmp, CoverStudio::customCoverPath((int) $project['id'], 'wrap'));
+                    $diag = \App\Services\CoverImport::diagnose($size, $project, $pages);
+                    $label = 'planche PDF';
+                } else {
+                    $size = \App\Services\CoverImport::readImage($tmp, null, (string) ($project['trim_format'] ?? ''));
+                    if (!$size) {
+                        @unlink($tmp);
                         Http::error('Image illisible.');
                     }
-                    // Le fichier est stocké en .jpg : un PNG est réellement
-                    // converti, pour que l'aperçu et les exports soient francs.
-                    if (($info[2] ?? 0) !== IMAGETYPE_JPEG) {
-                        $src = @imagecreatefromstring((string) file_get_contents($dest));
+                    $diag = \App\Services\CoverImport::diagnose($size, $project, $pages);
+                    // PLANCHE ou simple 1ère de couverture ? C'est la géométrie
+                    // qui tranche : une planche fait deux couvertures + un dos.
+                    if ($diag['detected'] !== null) {
+                        $store = CoverStudio::storePlanche((int) $project['id'], $tmp, $diag);
+                        $diag['panels'] = $store['panels'];
+                        $diag['kdp_pdf'] = $store['pdf'];
+                        $label = 'planche image (panneaux découpés' . ($store['pdf'] ? ' + PDF fabriqué pour KDP' : '') . ')';
+                    } else {
+                        $src = @imagecreatefromstring((string) file_get_contents($tmp));
                         if (!$src) {
-                            @unlink($dest);
+                            @unlink($tmp);
                             Http::error('Image illisible.');
                         }
                         $flat = imagecreatetruecolor(imagesx($src), imagesy($src));
                         imagefill($flat, 0, 0, imagecolorallocate($flat, 255, 255, 255));
                         imagecopy($flat, $src, 0, 0, 0, 0, imagesx($src), imagesy($src));
-                        imagejpeg($flat, $dest, 94);
+                        imagejpeg($flat, CoverStudio::customCoverPath((int) $project['id'], 'front'), 94);
                         imagedestroy($src);
                         imagedestroy($flat);
-                        $info = @getimagesize($dest);
+                        $label = 'image de 1ère de couverture';
                     }
+                    @unlink($tmp);
                 }
-                Util::journal((int) $project['id'], 'ok', 'Couverture personnelle importée ('
-                    . ($kind === 'wrap' ? 'PDF broché complet' : 'image de 1ère de couverture') . ') — utilisée telle quelle dans les exports.');
-                Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
+
+                Util::journal((int) $project['id'], $diag['verdict'] === 'attention' ? 'warn' : 'ok',
+                    'Couverture importée (' . $label . ') — ' . $diag['message']);
+                Http::ok([
+                    'custom'    => CoverStudio::customCovers((int) $project['id']),
+                    'diagnosis' => $diag,
+                ]);
+
+            case 'coverstudio/custom-info':
+                // Diagnostic de la planche importée : dimensions, format déduit,
+                // épaisseur du dos, pagination supposée, et conformité au livre.
+                $project = self::project((int) Http::in('id'), $userId);
+                Http::ok([
+                    'custom'    => CoverStudio::customCovers((int) $project['id']),
+                    'diagnosis' => self::customDiagnosis($project),
+                ]);
 
             case 'coverstudio/custom-file':
                 // VOTRE fichier de couverture, servi tel quel pour l'aperçu
                 // (le PDF s'affiche dans la visionneuse intégrée du navigateur).
                 $project = self::project((int) Http::in('id'), $userId);
-                $kind = Http::in('kind') === 'wrap' ? 'wrap' : 'front';
+                $allowed = ['wrap', 'planche', 'planche_pdf', 'planche_front', 'planche_back', 'planche_spine', 'front'];
+                $kind = in_array(Http::in('kind'), $allowed, true) ? (string) Http::in('kind') : 'front';
                 // ?preview=1 : aperçu image extrait du PDF, pour l'afficher
                 // dans le studio sans dépendre de la visionneuse du navigateur.
                 if ($kind === 'wrap' && Http::in('preview')) {
@@ -548,12 +581,13 @@ final class Router
                 if (!is_file($path)) {
                     Http::error('Aucune couverture importée.', 404);
                 }
-                header('Content-Type: ' . ($kind === 'wrap' ? 'application/pdf' : 'image/jpeg'));
+                $isPdf = in_array($kind, ['wrap', 'planche_pdf'], true);
+                header('Content-Type: ' . ($isPdf ? 'application/pdf' : 'image/jpeg'));
                 header('Cache-Control: no-store');
                 header('Content-Length: ' . (string) filesize($path));
                 if (Http::in('download')) {
                     header('Content-Disposition: attachment; filename="ma-couverture-'
-                        . (int) $project['id'] . '.' . ($kind === 'wrap' ? 'pdf' : 'jpg') . '"');
+                        . (int) $project['id'] . '.' . ($isPdf ? 'pdf' : 'jpg') . '"');
                 }
                 readfile($path);
                 exit;
@@ -561,21 +595,14 @@ final class Router
             case 'coverstudio/clear-custom':
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
-                foreach (['wrap', 'front'] as $kind) {
-                    if (Http::in('kind') === '' || Http::in('kind') === $kind) {
-                        @unlink(CoverStudio::customCoverPath((int) $project['id'], $kind));
-                    }
-                }
-                CoverStudio::forgetWrapPreview((int) $project['id']);
+                CoverStudio::clearCustom((int) $project['id']);
                 Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
 
             case 'coverstudio/upload-ref':
                 Http::requirePost();
                 $project = self::project((int) ($_POST['id'] ?? 0), $userId);
                 $file = $_FILES['file'] ?? null;
-                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                    Http::error('Fichier manquant.');
-                }
+                self::checkUpload($file);
                 $info = @getimagesize($file['tmp_name']);
                 if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
                     Http::error('Format accepté : JPEG, PNG ou WebP.');
@@ -595,7 +622,12 @@ final class Router
             case 'coverstudio/front':
                 @set_time_limit(120);
                 $project = self::project((int) Http::in('id'), $userId);
+                // Votre 1ère de couverture : celle fournie seule, sinon le
+                // PANNEAU découpé dans la planche que vous avez importée.
                 $customFront = CoverStudio::customCoverPath((int) $project['id'], 'front');
+                if (!is_file($customFront)) {
+                    $customFront = CoverStudio::customCoverPath((int) $project['id'], 'planche_front');
+                }
                 if (is_file($customFront)) {
                     header('Content-Type: image/jpeg');
                     header('Cache-Control: no-store');
@@ -652,10 +684,14 @@ final class Router
                 // par KDP pour l'impression, téléversable tel quel.
                 @set_time_limit(300);
                 $project = self::project((int) Http::in('id'), $userId);
-                // Vous avez importé VOTRE couverture : elle est servie telle quelle
-                $customWrap = CoverStudio::customCoverPath((int) $project['id'], 'wrap');
-                if (is_file($customWrap)) {
-                    self::download($customWrap, 'couverture-broche-kdp.pdf', 'application/pdf');
+                // Vous avez importé VOTRE couverture : elle est servie telle
+                // quelle. Planche PDF d'abord ; à défaut le PDF fabriqué à la
+                // taille exacte depuis la planche fournie en image.
+                foreach (['wrap', 'planche_pdf'] as $kind) {
+                    $customWrap = CoverStudio::customCoverPath((int) $project['id'], $kind);
+                    if (is_file($customWrap)) {
+                        self::download($customWrap, 'couverture-broche-kdp.pdf', 'application/pdf');
+                    }
                 }
                 $cover = Covers::get($project, self::selectedConceptOrNull($project), $user);
                 $geometry = \App\Services\Layout::geometry($project);
@@ -799,9 +835,7 @@ final class Router
                 @set_time_limit(180);
                 $project = self::project((int) ($_POST['id'] ?? 0), $userId);
                 $file = $_FILES['file'] ?? null;
-                if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                    Http::error('Fichier PDF manquant.');
-                }
+                self::checkUpload($file, 'Le PDF du livre est');
                 if (strtolower((string) pathinfo((string) $file['name'], PATHINFO_EXTENSION)) !== 'pdf') {
                     Http::error('Format attendu : PDF.');
                 }
@@ -1352,6 +1386,56 @@ final class Router
      * ou créés sans passer par la sélection de concept : la génération des
      * textes de couverture et des métadonnées KDP fonctionne dans tous les cas.
      */
+    /**
+     * Vérifie un fichier reçu et explique VRAIMENT ce qui cloche. Le cas le
+     * plus fréquent sur mutualisé : la planche de couverture dépasse la limite
+     * d'envoi de PHP — inutile de parler de « fichier manquant », on donne le
+     * poids, la limite et où la relever.
+     */
+    private static function checkUpload(?array $file, string $what = 'Fichier'): void
+    {
+        $code = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+        if ($file && $code === UPLOAD_ERR_OK) {
+            return;
+        }
+        $limit = (string) ini_get('upload_max_filesize');
+        $post = (string) ini_get('post_max_size');
+        $sent = isset($file['size']) ? ' (' . Util::nf((int) round($file['size'] / 1048576)) . ' Mo environ)' : '';
+
+        Http::error(match ($code) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => $what . ' trop lourd' . $sent
+                . ' : votre serveur limite les envois à ' . $limit . ' (et ' . $post . ' par requête). '
+                . 'Relevez upload_max_filesize et post_max_size dans public/.user.ini '
+                . '(ou le panneau PHP de votre hébergeur), puis réessayez.',
+            UPLOAD_ERR_PARTIAL   => 'Envoi interrompu en cours de route — réessayez.',
+            UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE => 'Le serveur n\'a pas pu écrire le fichier temporaire.',
+            UPLOAD_ERR_EXTENSION => 'Envoi bloqué par une extension PHP du serveur.',
+            default              => $what . ' manquant.',
+        });
+    }
+
+    /**
+     * Diagnostic de la couverture importée d'un projet : dimensions de la
+     * planche, format et dos déduits, conformité au livre. null si aucune
+     * couverture n'a été importée.
+     */
+    private static function customDiagnosis(array $project): ?array
+    {
+        $projectId = (int) $project['id'];
+        $pages = Layout::summary($project, null)['geometry']['pages'];
+        $wrap = CoverStudio::customCoverPath($projectId, 'wrap');
+        $planche = CoverStudio::customCoverPath($projectId, 'planche');
+
+        if (is_file($planche)) {
+            $size = \App\Services\CoverImport::readImage($planche, null, (string) ($project['trim_format'] ?? ''));
+        } elseif (is_file($wrap)) {
+            $size = \App\Services\CoverImport::readPdf($wrap);
+        } else {
+            return null;
+        }
+        return $size ? \App\Services\CoverImport::diagnose($size, $project, $pages) : null;
+    }
+
     private static function bookContext(array $project): array
     {
         $concept = self::selectedConceptOrNull($project);
@@ -1429,9 +1513,7 @@ final class Router
             Http::error('Emplacement visuel introuvable.');
         }
         $file = $_FILES['file'] ?? null;
-        if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            Http::error('Fichier manquant ou refusé par le serveur.');
-        }
+        self::checkUpload($file, 'Visuel');
         $info = @getimagesize($file['tmp_name']);
         if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
             Http::error('Format accepté : JPEG, PNG ou WebP.');

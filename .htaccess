@@ -5,3 +5,17 @@ RewriteEngine On
 RewriteCond %{REQUEST_URI} !^/public/
 RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>
+
+# Couvertures KDP : une planche 300 dpi pèse couramment 5 à 40 Mo. Ces valeurs
+# s'appliquent quand PHP tourne en module Apache ; en CGI/FastCGI, c'est
+# public/.user.ini qui prend le relais.
+<IfModule mod_php.c>
+php_value upload_max_filesize 64M
+php_value post_max_size 72M
+php_value max_execution_time 300
+php_value memory_limit 512M
+</IfModule>
+<IfModule mod_php7.c>
+php_value upload_max_filesize 64M
+php_value post_max_size 72M
+</IfModule>

@@ -183,6 +183,33 @@ boucle d'écriture (compatible mutualisé : aucun processus long côté serveur)
 > L'automatisation de saisie dans votre propre navigateur relève de votre responsabilité
 > vis-à-vis des conditions d'utilisation d'Amazon.
 
+## Importer sa propre couverture (la « planche »)
+
+Sur KDP, la couverture d'un broché est **un seul fichier** : 4ème de couverture · dos · 1ère de
+couverture, plus 3,175 mm de fond perdu tout autour. C'est cette planche qui s'importe à l'étape 04,
+en **PDF ou en image**, et elle remplace alors la couverture composée dans les exports.
+
+Le studio la **mesure** et vous dit ce qu'elle raconte : format du livre déduit de sa hauteur,
+épaisseur du dos, et donc **la pagination qu'elle suppose**. Puis il la confronte à votre livre —
+c'est ce contrôle qui évite le refus au téléversement sur KDP. Si le format ne correspond pas, un
+bouton aligne le livre sur celui de la planche.
+
+|  | Planche PDF | Planche image (JPG/PNG) |
+|---|---|---|
+| Fichier envoyé à KDP | le vôtre, intact | un PDF fabriqué à la taille exacte |
+| Aperçu dans le studio | visionneuse du navigateur (ou image extraite si le PDF est aplati) | l'image elle-même |
+| Découpe en 4ème / dos / 1ère | non | oui |
+| JPG eBook, vignettes, mockup 3D | — | tirés du panneau de 1ère |
+
+> Un PDF exporté par Photoshop empile ses calques et peint son texte à travers un masque : aucun
+> aperçu image ne peut en être tiré fidèlement sans moteur de rendu, et le studio le dit plutôt que
+> d'afficher un calque isolé. Le fichier part malgré tout **intact** sur KDP. Pour profiter des
+> panneaux découpés et des déclinaisons, exportez aussi votre planche en JPEG.
+
+> ⚠️ Une planche 300 dpi pèse souvent 5 à 40 Mo. Les limites d'envoi sont relevées dans
+> `public/.user.ini` (PHP en CGI/FastCGI) et `.htaccess` (PHP en module Apache) ; si votre hébergeur
+> plafonne plus bas, le studio affiche la limite réelle et où la changer.
+
 ## Langue du livre
 
 Un livre a **une** langue, et tout le studio la suit — métadonnées Amazon (sous-titre,

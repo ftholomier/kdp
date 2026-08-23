@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-17 · c26';
+  const BUILD = '2026-08-23 · c27';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -206,6 +206,7 @@
       S.coverElsBack = null;
       S.coverLibrary = null;
       S.coverCustom = null;
+      S.coverDiagnosis = null;
       S.importAnalysis = null;
       S.importMode = 'identique';
       S.importOwned = false;
@@ -885,8 +886,10 @@
 
           <div style="font-size:14px; font-weight:600; margin:20px 0 8px;">Ma couverture est déjà prête</div>
           <div class="faint" style="font-size:11.5px; line-height:1.5; margin-bottom:9px;">
-            Envoyez votre fichier : il remplace la couverture composée dans les exports.
-            PDF = broché complet (4ème + dos + 1ère), JPG/PNG = 1ère de couverture (eBook).
+            Envoyez <strong>la planche complète</strong> — 4ème de couverture + dos + 1ère en un seul fichier,
+            fond perdu compris, comme l'exige KDP. PDF ou JPG/PNG : le studio mesure la planche, en déduit
+            le format et l'épaisseur du dos, et vous dit si elle correspond à votre livre.
+            Une image de 1ère de couverture seule est également acceptée.
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn btn-ghost" style="padding:9px 12px; font-size:12.5px; flex:1;" onclick="App.uploadCustomCover()" ${S.busy.customcov ? 'disabled' : ''}>
@@ -997,38 +1000,85 @@
    */
   function customCoverView() {
     const custom = S.coverCustom;
-    if (!custom || (!custom.wrap && !custom.front)) return '';
+    if (!custom || !custom.any) return '';
+    const d = S.coverDiagnosis;
     const stamp = S.coverStamp || 0;
     const url = kind => `api.php?r=coverstudio/custom-file&id=${S.project.id}&kind=${kind}&t=${stamp}`;
+    const mm = v => String(Number(v).toFixed(1)).replace('.', ',') + ' mm';
+
+    // Ce qu'on sait montrer : la planche image, l'image extraite d'un PDF
+    // aplati, la 1ère seule — ou, à défaut, la visionneuse du navigateur.
+    let visual = '';
+    if (custom.preview === 'planche') {
+      visual = `<img class="wrap" src="${url('planche')}" alt="Ma planche de couverture"
+                     title="Cliquez pour l'ouvrir en grand" onclick="window.open('${url('planche')}', '_blank')">`;
+    } else if (custom.preview === 'wrap') {
+      visual = `<img class="wrap" src="${url('wrap')}&preview=1" alt="Ma planche de couverture"
+                     title="Aperçu extrait de votre PDF — cliquez pour ouvrir le fichier"
+                     onclick="window.open('${url('wrap')}', '_blank')">`;
+    } else if (custom.preview === 'front') {
+      visual = `<img class="front" src="${url('front')}" alt="Ma 1ère de couverture">`;
+    } else if (custom.wrap) {
+      visual = `
+        <object class="pdf" data="${url('wrap')}#toolbar=0&navpanes=0&view=FitH" type="application/pdf">
+          <div class="fallback">Aperçu impossible ici — <span onclick="window.open('${url('wrap')}', '_blank')">ouvrir le PDF</span>.</div>
+        </object>
+        ${d && !d.flat && d.flat_reason ? `<div class="faint" style="font-size:11.5px; margin-top:7px;">${esc(d.flat_reason)} Le fichier part sur KDP tel quel : sa fidélité n'est pas en cause, seul l'aperçu intégré l'est.</div>` : ''}`;
+    }
+
     return `
       <div class="card custom-cover-card">
         <div class="hd">
           <div>
             <div class="t">Ma couverture importée</div>
-            <div class="sub">Utilisée telle quelle dans les exports, à la place de la couverture composée.</div>
+            <div class="sub">${custom.wrap ? 'Planche PDF' : (custom.planche ? 'Planche image' : 'Image de 1ère de couverture')} — utilisée telle quelle dans les exports, à la place de la couverture composée.</div>
           </div>
           <div class="acts">
-            <button class="btn btn-ghost" onclick="window.open('${url(custom.wrap ? 'wrap' : 'front')}', '_blank')">Ouvrir ↗</button>
-            <button class="btn btn-ghost" onclick="window.open('${url(custom.wrap ? 'wrap' : 'front')}&download=1', '_blank')">Télécharger</button>
+            <button class="btn btn-ghost" onclick="window.open('${url(custom.kdp_pdf || custom.preview || 'front')}', '_blank')">Ouvrir ↗</button>
+            ${custom.kdp_pdf ? `<button class="btn btn-ghost" onclick="window.open('${url(custom.kdp_pdf)}&download=1', '_blank')" title="Le fichier à téléverser sur KDP">PDF KDP</button>` : ''}
             <button class="btn btn-ghost" onclick="App.clearCustomCover()" title="Revenir à la couverture composée">✕</button>
           </div>
         </div>
-        ${custom.wrap ? `
-        <div class="badge">PDF broché complet — 4ème + dos + 1ère</div>
-        ${custom.wrap_preview
-          ? `<img class="wrap" src="${url('wrap')}&preview=1" alt="Ma couverture broché complet"
-                  title="Aperçu extrait de votre PDF — cliquez pour l'ouvrir en grand"
-                  onclick="window.open('${url('wrap')}', '_blank')">`
-          : `<object class="pdf" data="${url('wrap')}#toolbar=0&navpanes=0&view=FitH" type="application/pdf">
-               <div class="fallback">
-                 Ce PDF est vectoriel : votre navigateur ne l'affiche pas ici —
-                 <span onclick="window.open('${url('wrap')}', '_blank')">ouvrir dans un onglet</span>.
-               </div>
-             </object>`}` : ''}
-        ${custom.front ? `
-        <div class="badge">Image de 1ère de couverture — eBook</div>
-        <img class="front" src="${url('front')}" alt="Ma 1ère de couverture">` : ''}
+
+        ${d ? `
+        <div class="verdict ${esc(d.verdict)}">
+          <div class="v">${d.verdict === 'ok' ? '✓ Planche conforme à votre livre' : (d.verdict === 'attention' ? '⚠ Planche à corriger' : '⚠ Format non reconnu')}</div>
+          <div class="m">${esc(d.message)}</div>
+          <div class="dims">
+            <span>Planche <strong>${mm(d.w_mm)} × ${mm(d.h_mm)}</strong> (${String(d.w_in).replace('.', ',')} × ${String(d.h_in).replace('.', ',')} po)</span>
+            ${d.detected ? `<span>Format détecté <strong>${esc(d.detected.trim_name || d.detected.trim)}</strong></span>
+              <span>Dos <strong>${mm(d.detected.spine_mm)}</strong> ≈ ${nf(d.detected.pages)} pages</span>` : ''}
+            <span>Attendu pour ce livre <strong>${mm(d.expected.w_mm)} × ${mm(d.expected.h_mm)}</strong> (${nf(d.expected.pages)} p., dos ${mm(d.expected.spine_mm)})</span>
+          </div>
+          ${d.verdict === 'attention' && d.detected && d.detected.trim !== d.expected.trim ? `
+          <button class="btn btn-soft" style="padding:7px 12px; font-size:12px; margin-top:10px; width:auto;"
+                  onclick="App.adoptCoverTrim('${esc(d.detected.trim)}')">Régler mon livre sur le format ${esc(d.detected.trim_name || d.detected.trim)}</button>` : ''}
+        </div>` : ''}
+
+        ${visual}
+
+        ${custom.panels ? `
+        <div class="panels">
+          <div class="lbl">Les trois faces découpées dans votre planche</div>
+          <div class="strip">
+            <figure><img src="${url('planche_back')}" alt="4ème de couverture"><figcaption>4ème</figcaption></figure>
+            <figure class="spine"><img src="${url('planche_spine')}" alt="Dos"><figcaption>Dos</figcaption></figure>
+            <figure><img src="${url('planche_front')}" alt="1ère de couverture"><figcaption>1ère</figcaption></figure>
+          </div>
+          <div class="faint" style="font-size:11.5px; margin-top:8px;">La 1ère sert aussi de JPG eBook, de vignette et de base au mockup 3D.</div>
+        </div>` : ''}
       </div>`;
+  }
+
+  /** Diagnostic de la planche importée (dimensions, dos, conformité). */
+  async function loadCoverDiagnosis() {
+    if (!S.coverCustom || !S.coverCustom.any) { S.coverDiagnosis = null; return; }
+    try {
+      const data = await Api.get('coverstudio/custom-info', { id: S.project.id });
+      S.coverDiagnosis = data.diagnosis;
+      S.coverCustom = data.custom;
+      render();
+    } catch (e) { S.coverDiagnosis = null; }
   }
 
   async function loadCover() {
@@ -1040,7 +1090,8 @@
       S.coverElsBack = data.els_back;
       S.editorEls = S.coverFace === 'back' ? data.els_back : data.els;
       S.coverLibrary = data.library || [];
-      S.coverCustom = data.custom || { wrap: false, front: false };
+      S.coverCustom = data.custom || { any: false };
+      loadCoverDiagnosis();
       S.coverFonts = data.fonts;
       S.coverMotifs = data.motifs;
       S.coverGeometry = data.geometry;
@@ -2546,8 +2597,12 @@
         try {
           const data = await Api.upload('coverstudio/upload-custom', form);
           S.coverCustom = data.custom;
+          S.coverDiagnosis = data.diagnosis || null;
           S.coverStamp = Date.now();
-          toast('Couverture importée — elle sera utilisée telle quelle dans les exports.');
+          toast(data.diagnosis && data.diagnosis.verdict === 'attention'
+            ? '⚠ ' + data.diagnosis.message
+            : 'Couverture importée — elle sera utilisée telle quelle dans les exports.',
+            !!(data.diagnosis && data.diagnosis.verdict === 'attention'));
         } catch (e) { toast(e.message, true); }
         setBusy('customcov', false);
         render();
@@ -2555,11 +2610,22 @@
       input.click();
     },
 
+    /** Aligner le livre sur le format détecté dans la planche importée. */
+    async adoptCoverTrim(trim) {
+      try {
+        await Api.post('projects/update', { id: S.project.id, trim_format: trim });
+        await refreshProject();
+        await loadCoverDiagnosis();
+        toast('Format du livre mis à jour — la planche est réanalysée.');
+      } catch (e) { toast(e.message, true); }
+    },
+
     async clearCustomCover() {
       if (!confirm('Revenir à la couverture composée dans le studio ?')) return;
       try {
         const data = await Api.post('coverstudio/clear-custom', { id: S.project.id, kind: '' });
         S.coverCustom = data.custom;
+        S.coverDiagnosis = null;
         S.coverStamp = Date.now();
         render();
       } catch (e) { toast(e.message, true); }

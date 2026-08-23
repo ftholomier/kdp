@@ -125,9 +125,13 @@ return [
 
     // ── Formats d'impression proposés ──────────────────────────────────────
     'trims' => [
-        '6x9'  => ['label' => '15,24 × 22,86 cm (6×9) — standard non-fiction', 'w_mm' => 152.4, 'h_mm' => 228.6],
-        '5x8'  => ['label' => '12,7 × 20,32 cm (5×8) — poche',                 'w_mm' => 127.0, 'h_mm' => 203.2],
-        '7x10' => ['label' => '17,78 × 25,4 cm (7×10) — illustré',             'w_mm' => 177.8, 'h_mm' => 254.0],
+        '6x9'      => ['label' => '15,24 × 22,86 cm (6×9) — standard non-fiction', 'w_mm' => 152.4, 'h_mm' => 228.6],
+        '5x8'      => ['label' => '12,7 × 20,32 cm (5×8) — poche',                 'w_mm' => 127.0, 'h_mm' => 203.2],
+        // NB : pas de point dans les clés — Config::get() lit des chemins « a.b »
+        '5_5x8_5'  => ['label' => '13,97 × 21,59 cm (5,5×8,5) — roman',            'w_mm' => 139.7, 'h_mm' => 215.9],
+        '7x10'     => ['label' => '17,78 × 25,4 cm (7×10) — illustré',             'w_mm' => 177.8, 'h_mm' => 254.0],
+        '8x10'     => ['label' => '20,32 × 25,4 cm (8×10) — beau livre',           'w_mm' => 203.2, 'h_mm' => 254.0],
+        '8_5x11'   => ['label' => '21,59 × 27,94 cm (8,5×11) — cahier, cuisine',   'w_mm' => 215.9, 'h_mm' => 279.4],
     ],
 
     // ── Chemins (hors racine web) ──────────────────────────────────────────

@@ -373,28 +373,99 @@ final class CoverStudio
     }
 
     /**
-     * VOTRE couverture déjà prête : 'wrap' = PDF broché complet (4ème + dos +
-     * 1ère, prêt pour KDP), 'front' = image de 1ère de couverture (eBook).
+     * VOTRE couverture déjà prête. Trois formes acceptées :
+     *   'wrap'    — PDF de la PLANCHE complète (4ème + dos + 1ère), prêt pour KDP ;
+     *   'planche' — la même planche fournie en image (JPEG/PNG) : le studio en
+     *               tire les trois panneaux et fabrique le PDF pour KDP ;
+     *   'front'   — image de 1ère de couverture seule (eBook).
      * Quand ces fichiers existent, ils priment sur la couverture composée.
      */
     public static function customCoverPath(int $projectId, string $kind): string
     {
-        $kind = $kind === 'wrap' ? 'wrap' : 'front';
-        $ext = $kind === 'wrap' ? 'pdf' : 'jpg';
-        return (string) Config::get('paths.uploads') . '/cover-custom-' . $kind . '-' . $projectId . '.' . $ext;
+        $map = [
+            'wrap'          => 'wrap.pdf',            // planche PDF fournie
+            'planche'       => 'planche.jpg',         // planche image fournie
+            'planche_pdf'   => 'planche.pdf',         // PDF fabriqué depuis la planche image
+            'planche_front' => 'planche-front.jpg',   // panneau 1ère de couverture
+            'planche_back'  => 'planche-back.jpg',    // panneau 4ème de couverture
+            'planche_spine' => 'planche-spine.jpg',   // panneau dos
+            'front'         => 'front.jpg',           // 1ère seule
+        ];
+        $file = $map[$kind] ?? $map['front'];
+        [$name, $ext] = explode('.', $file);
+        return (string) Config::get('paths.uploads') . '/cover-custom-' . $name . '-' . $projectId . '.' . $ext;
     }
 
-    /** @return array{wrap:bool,front:bool,wrap_preview:bool} */
+    /**
+     * État de la couverture importée : ce qui est fourni, ce qu'on sait en
+     * montrer et ce qui part chez KDP.
+     */
     public static function customCovers(int $projectId): array
     {
         $wrap = is_file(self::customCoverPath($projectId, 'wrap'));
+        $planche = is_file(self::customCoverPath($projectId, 'planche'));
+        $front = is_file(self::customCoverPath($projectId, 'front'));
+        // Aperçu image : la planche fournie en image, sinon l'image extraite du
+        // PDF quand celui-ci est aplati (un PDF en calques ne donne rien de fiable).
+        $wrapPreview = $wrap && !$planche && self::wrapPreview($projectId) !== null;
+
         return [
             'wrap'         => $wrap,
-            'front'        => is_file(self::customCoverPath($projectId, 'front')),
-            // Aperçu image du PDF : vous voyez votre couverture dans le studio
-            // même si le navigateur n'affiche pas les PDF en ligne.
-            'wrap_preview' => $wrap && self::wrapPreview($projectId) !== null,
+            'planche'      => $planche,
+            'front'        => $front,
+            'wrap_preview' => $wrapPreview,
+            'preview'      => $planche ? 'planche' : ($wrapPreview ? 'wrap' : ($front ? 'front' : null)),
+            'panels'       => $planche && is_file(self::customCoverPath($projectId, 'planche_front')),
+            // Fichier qui partira sur KDP pour le broché
+            'kdp_pdf'      => $wrap ? 'wrap' : (is_file(self::customCoverPath($projectId, 'planche_pdf')) ? 'planche_pdf' : null),
+            'any'          => $wrap || $planche || $front,
         ];
+    }
+
+    /**
+     * Enregistre une planche fournie en IMAGE : panneaux découpés (4ème, dos,
+     * 1ère) et PDF prêt pour KDP fabriqué à la taille exacte. Le panneau de
+     * 1ère alimente ensuite le JPG eBook, les vignettes et le mockup.
+     */
+    public static function storePlanche(int $projectId, string $sourceImage, array $diagnosis): array
+    {
+        $dest = self::customCoverPath($projectId, 'planche');
+        $im = @imagecreatefromstring((string) @file_get_contents($sourceImage));
+        if (!$im) {
+            throw new \RuntimeException('Image illisible.');
+        }
+        imagejpeg($im, $dest, 94);
+        imagedestroy($im);
+
+        $out = ['panels' => false, 'pdf' => false];
+        $panels = CoverImport::panels($dest, $diagnosis);
+        if ($panels) {
+            foreach (['front' => 'planche_front', 'back' => 'planche_back', 'spine' => 'planche_spine'] as $key => $kind) {
+                if (!empty($panels[$key])) {
+                    imagejpeg($panels[$key], self::customCoverPath($projectId, $kind), 92);
+                    imagedestroy($panels[$key]);
+                }
+            }
+            $out['panels'] = true;
+        }
+        // Le PDF pour KDP est un plus : s'il échoue, la planche et ses
+        // panneaux restent en place, on ne perd pas l'import.
+        try {
+            $out['pdf'] = CoverImport::pdfFromImage($dest, $diagnosis, self::customCoverPath($projectId, 'planche_pdf'));
+        } catch (\Throwable $e) {
+            $out['pdf'] = false;
+            $out['pdf_error'] = $e->getMessage();
+        }
+        return $out;
+    }
+
+    /** Retire tous les fichiers d'une couverture importée. */
+    public static function clearCustom(int $projectId): void
+    {
+        foreach (['wrap', 'planche', 'planche_pdf', 'planche_front', 'planche_back', 'planche_spine', 'front'] as $kind) {
+            @unlink(self::customCoverPath($projectId, $kind));
+        }
+        self::forgetWrapPreview($projectId);
     }
 
     /** Oublie l'aperçu (couverture retirée ou remplacée). */
@@ -422,6 +493,12 @@ final class CoverStudio
     {
         $pdf = self::customCoverPath($projectId, 'wrap');
         if (!is_file($pdf)) {
+            return null;
+        }
+        // Un PDF en calques ou dont le texte est peint à travers un masque ne
+        // peut pas être aplati honnêtement : mieux vaut aucun aperçu qu'un faux.
+        $size = CoverImport::readPdf($pdf);
+        if (!$size || !$size['flat']) {
             return null;
         }
         $preview = self::wrapPreviewPath($projectId);

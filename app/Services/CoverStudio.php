@@ -384,13 +384,122 @@ final class CoverStudio
         return (string) Config::get('paths.uploads') . '/cover-custom-' . $kind . '-' . $projectId . '.' . $ext;
     }
 
-    /** @return array{wrap:bool,front:bool} */
+    /** @return array{wrap:bool,front:bool,wrap_preview:bool} */
     public static function customCovers(int $projectId): array
     {
+        $wrap = is_file(self::customCoverPath($projectId, 'wrap'));
         return [
-            'wrap'  => is_file(self::customCoverPath($projectId, 'wrap')),
-            'front' => is_file(self::customCoverPath($projectId, 'front')),
+            'wrap'         => $wrap,
+            'front'        => is_file(self::customCoverPath($projectId, 'front')),
+            // Aperçu image du PDF : vous voyez votre couverture dans le studio
+            // même si le navigateur n'affiche pas les PDF en ligne.
+            'wrap_preview' => $wrap && self::wrapPreview($projectId) !== null,
         ];
+    }
+
+    /** Oublie l'aperçu (couverture retirée ou remplacée). */
+    public static function forgetWrapPreview(int $projectId): void
+    {
+        @unlink(self::wrapPreviewPath($projectId));
+    }
+
+    private static function wrapPreviewPath(int $projectId): string
+    {
+        return (string) Config::get('paths.uploads') . '/cover-custom-wrap-preview-' . $projectId . '.jpg';
+    }
+
+    /**
+     * APERÇU de votre PDF de couverture, sans aucune dépendance externe
+     * (ni Ghostscript ni ImageMagick, absents des hébergements mutualisés) :
+     * les couvertures KDP sont quasiment toujours exportées comme une grande
+     * image JPEG posée pleine page. On récupère donc directement cette image
+     * dans le PDF. Un PDF purement vectoriel n'en contient pas : dans ce cas
+     * on renvoie null et l'interface propose la visionneuse du navigateur.
+     *
+     * @return string|null chemin de l'aperçu JPEG, ou null si non extractible
+     */
+    public static function wrapPreview(int $projectId): ?string
+    {
+        $pdf = self::customCoverPath($projectId, 'wrap');
+        if (!is_file($pdf)) {
+            return null;
+        }
+        $preview = self::wrapPreviewPath($projectId);
+        if (is_file($preview) && filemtime($preview) >= filemtime($pdf)) {
+            return $preview;
+        }
+        @unlink($preview);
+
+        $jpeg = self::biggestJpegIn((string) @file_get_contents($pdf));
+        if ($jpeg === null) {
+            return null;
+        }
+        $src = @imagecreatefromstring($jpeg);
+        if (!$src) {
+            return null;
+        }
+        // Aperçu allégé : 1400 px de large suffisent largement à l'écran.
+        $w = imagesx($src);
+        $h = imagesy($src);
+        $max = 1400;
+        if ($w > $max) {
+            $dst = imagescale($src, $max, (int) round($h * $max / $w));
+            if ($dst) {
+                imagedestroy($src);
+                $src = $dst;
+            }
+        }
+        imagejpeg($src, $preview, 88);
+        imagedestroy($src);
+        return is_file($preview) ? $preview : null;
+    }
+
+    /**
+     * Plus grande image JPEG (filtre /DCTDecode) contenue dans un PDF : c'est
+     * l'artwork de la couverture. Lecture directe des flux, le JPEG étant
+     * stocké tel quel dans le fichier.
+     */
+    private static function biggestJpegIn(string $raw): ?string
+    {
+        $best = null;
+        $offset = 0;
+        while (($pos = strpos($raw, 'stream', $offset)) !== false) {
+            $dictStart = max(0, $pos - 2000);
+            $dict = substr($raw, $dictStart, $pos - $dictStart);
+            $offset = $pos + 6;
+            // Le dictionnaire de CE flux : après le dernier « obj » rencontré
+            $objPos = strrpos($dict, 'obj');
+            if ($objPos !== false) {
+                $dict = substr($dict, $objPos);
+            }
+            if (!str_contains($dict, 'DCTDecode') || !str_contains($dict, '/Image')) {
+                continue;
+            }
+            $start = $pos + 6;
+            if (substr($raw, $start, 2) === "\r\n") {
+                $start += 2;
+            } elseif (in_array(substr($raw, $start, 1), ["\n", "\r"], true)) {
+                $start += 1;
+            }
+            $end = strpos($raw, 'endstream', $start);
+            if ($end === false) {
+                continue;
+            }
+            $data = substr($raw, $start, $end - $start);
+            // Un JPEG commence par FFD8 : garde-fou contre un flux mal découpé
+            if (substr($data, 0, 2) !== "\xFF\xD8") {
+                continue;
+            }
+            if ($best === null || strlen($data) > strlen($best)) {
+                $best = $data;
+            }
+            $offset = $end + 9;
+        }
+        if ($best === null) {
+            return null;
+        }
+        $info = @getimagesizefromstring($best);
+        return ($info && ($info[2] ?? 0) === IMAGETYPE_JPEG && $info[0] >= 400) ? $best : null;
     }
 
     /**

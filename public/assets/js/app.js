@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-16 · c25';
+  const BUILD = '2026-08-17 · c26';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -17,6 +17,11 @@
     { key: 'couleur', label: 'Couleur' },
     { key: 'schemas', label: 'Schémas seuls' }
   ];
+  // Exemples de consigne libre sur un import, selon ce qu'on en fait
+  const IMPORT_BRIEF_PLACEHOLDER = {
+    identique: 'Ex. : garder le contenu tel quel, mais viser les débutants — couverture plus douce et titre plus explicite.',
+    inspire: 'Ex. : reprends la logique du plan mais pour des recettes vegan, ajoute un chapitre sur le matériel et supprime les parties sur la congélation.'
+  };
   const IDEA_CHIPS = ['télétravail', 'parents pressés', 'sans se lever à 5 h', 'charge mentale', '21 jours'];
   const SIGNALS = [
     'Rang des ventes (BSR) des 100 premiers titres de la catégorie',
@@ -31,7 +36,7 @@
     view: 'boot',              // boot | login | dashboard | wizard
     projects: [],
     project: null,
-    bundle: { themes: { analysis: [], trends: [] }, concepts: [], toc: [], trims: {} },
+    bundle: { themes: { analysis: [], trends: [] }, concepts: [], toc: [], trims: {}, lang: null, langs: [] },
     step: 1,
     busy: {},                  // indicateurs de chargement par clé
     cover: null,
@@ -183,7 +188,7 @@
     try {
       const data = await Api.get('projects/get', { id });
       S.project = data.project;
-      S.bundle = { themes: data.themes, concepts: data.concepts, toc: data.toc, trims: data.trims };
+      S.bundle = { themes: data.themes, concepts: data.concepts, toc: data.toc, trims: data.trims, lang: data.lang, langs: data.langs };
       S.step = Math.min(step || Number(data.project.step) || 1, 7);
       S.view = 'wizard';
       S.writer = { status: null, journal: [], lastId: 0, looping: false, incident: null };
@@ -226,7 +231,7 @@
   async function refreshProject() {
     const data = await Api.get('projects/get', { id: S.project.id });
     S.project = data.project;
-    S.bundle = { themes: data.themes, concepts: data.concepts, toc: data.toc, trims: data.trims };
+    S.bundle = { themes: data.themes, concepts: data.concepts, toc: data.toc, trims: data.trims, lang: data.lang, langs: data.langs };
   }
 
   function goStep(n) {
@@ -481,6 +486,32 @@
     return S.project.mode === 'trends' ? S.bundle.themes.trends : S.bundle.themes.analysis;
   }
 
+  /**
+   * Choix de la LANGUE DU LIVRE. Présent dès l'étape 01 (avant d'écrire une
+   * ligne) et rappelé dans les paramètres de l'étape 03. Il commande la
+   * rédaction, la couverture, les métadonnées Amazon et les libellés composés
+   * dans le livre (sommaire, encadrés, pages de fin).
+   */
+  function langPickerView(compact) {
+    const lang = S.bundle.lang;
+    const langs = S.bundle.langs || [];
+    if (!lang || !langs.length) return '';
+    const select = `<select onchange="App.setBookLang(this.value)">
+        ${langs.map(l => `<option value="${esc(l.code)}" ${l.code === lang.code ? 'selected' : ''}>${esc(l.name)}${l.native !== l.name ? ' · ' + esc(l.native) : ''}</option>`).join('')}
+      </select>`;
+    if (compact) {
+      return `<div><div class="param-label">Langue du livre</div>${select}</div>`;
+    }
+    return `
+      <div class="lang-picker">
+        <div>
+          <div class="t">Langue du livre</div>
+          <div class="sub">Rédaction, couverture, métadonnées Amazon et libellés du livre — tout suit ce choix. Boutique de référence : ${esc(lang.marketplace)}.</div>
+        </div>
+        ${select}
+      </div>`;
+  }
+
   function step1View() {
     const p = S.project;
     const mode = p.mode === 'trends' ? 'trends' : (p.mode === 'import' ? 'import' : 'describe');
@@ -503,6 +534,8 @@
         <div class="${mode === 'import' ? 'on' : ''}" onclick="App.setMode('import')">📄 Importer un livre</div>
       </div>
 
+      ${langPickerView(false)}
+
       ${mode === 'import' ? `
       <div class="idea-grid">
         <div class="card card-pad">
@@ -523,6 +556,16 @@
           <label style="margin-top:14px; display:block;">Titre du livre
             <input type="text" id="import-title" value="${esc(imp.title_guess || '')}" placeholder="Titre repris sur la couverture">
           </label>
+
+          <label style="margin-top:14px; display:block;">Ce que vous voulez faire de ce livre
+            <textarea rows="3" id="import-brief" placeholder="${esc(IMPORT_BRIEF_PLACEHOLDER[S.importMode || 'identique'])}"
+                      oninput="App.setImportBrief(this.value)">${esc(S.importBrief || '')}</textarea>
+          </label>
+          <div class="faint" style="font-size:11.5px; line-height:1.5; margin-top:-2px;">
+            ${(S.importMode || 'identique') === 'identique'
+              ? 'En reprise à l’identique, votre texte n’est pas touché : cette consigne sert de ligne éditoriale à la couverture et aux métadonnées Amazon.'
+              : 'En inspiration, cette consigne <strong>retravaille le plan</strong> avant qu’il n’arrive dans le sommaire — chapitres ajoutés, retirés, réorientés.'}
+          </div>
 
           <div style="font-size:13.5px; font-weight:600; margin:18px 0 8px;">Que voulez-vous en faire ?</div>
           <div class="import-modes">
@@ -737,6 +780,7 @@
           </div>
 
           <div style="display:grid; gap:14px;">
+            ${langPickerView(true)}
             <div>
               <div class="param-label">Ton d'écriture</div>
               <div class="chip-row">
@@ -761,7 +805,7 @@
           <div class="toc-head">
             <div>
               <div class="t">Sommaire proposé</div>
-              <div class="sub">${chapterCount} chapitres · flèches pour réordonner · cliquez un titre pour l'éditer</div>
+              <div class="sub">${chapterCount} chapitres · cliquez un titre ou une sous-partie pour l'éditer · ▲▼ réordonner · ✕ supprimer</div>
             </div>
             <div class="target">${nf(words)} mots visés</div>
           </div>
@@ -773,7 +817,16 @@
               <div class="title serif" contenteditable="true" spellcheck="false"
                    onblur="App.editTocTitle(${i}, this.textContent)"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">${esc(c.title)}</div>
-              <div class="toc-parts">${(c.parts || []).map(part => `<div class="toc-part">${esc(part)}</div>`).join('')}</div>
+              <div class="toc-parts">
+                ${(c.parts || []).map((part, j) => `
+                <div class="toc-part">
+                  <span contenteditable="true" spellcheck="false"
+                        onblur="App.editTocPart(${i}, ${j}, this.textContent)"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">${esc(part)}</span>
+                  <span class="x" title="Retirer cette partie" onclick="App.removeTocPart(${i}, ${j})">✕</span>
+                </div>`).join('')}
+                <div class="toc-part add" onclick="App.addTocPart(${i})" title="Ajouter une sous-partie">+ partie</div>
+              </div>
             </div>
             <div class="toc-side">
               <div>${Math.max(6, Math.round(p.pages / chapterCount))} p.</div>
@@ -782,6 +835,7 @@
             <div class="toc-move">
               <span onclick="App.moveToc(${i}, -1)" title="Monter">▲</span>
               <span onclick="App.moveToc(${i}, 1)" title="Descendre">▼</span>
+              <span class="del" onclick="App.deleteTocChapter(${i})" title="Supprimer ce chapitre">✕</span>
             </div>
           </div>`).join('')}
 
@@ -896,6 +950,7 @@
         </div>
 
         <div>
+          ${customCoverView()}
           <div class="card" style="padding:14px;">
             <div class="face-switch">
               <span class="${(S.coverFace || 'front') === 'front' ? 'on' : ''}" onclick="App.setCoverFace('front')">1ère de couverture</span>
@@ -933,6 +988,47 @@
         </div>
       </div>`}
     </div>`;
+  }
+
+  /**
+   * VOTRE couverture importée, affichée telle quelle : le PDF broché passe par
+   * la visionneuse intégrée du navigateur, l'image de 1ère s'affiche
+   * directement. C'est ce fichier qui part dans les exports.
+   */
+  function customCoverView() {
+    const custom = S.coverCustom;
+    if (!custom || (!custom.wrap && !custom.front)) return '';
+    const stamp = S.coverStamp || 0;
+    const url = kind => `api.php?r=coverstudio/custom-file&id=${S.project.id}&kind=${kind}&t=${stamp}`;
+    return `
+      <div class="card custom-cover-card">
+        <div class="hd">
+          <div>
+            <div class="t">Ma couverture importée</div>
+            <div class="sub">Utilisée telle quelle dans les exports, à la place de la couverture composée.</div>
+          </div>
+          <div class="acts">
+            <button class="btn btn-ghost" onclick="window.open('${url(custom.wrap ? 'wrap' : 'front')}', '_blank')">Ouvrir ↗</button>
+            <button class="btn btn-ghost" onclick="window.open('${url(custom.wrap ? 'wrap' : 'front')}&download=1', '_blank')">Télécharger</button>
+            <button class="btn btn-ghost" onclick="App.clearCustomCover()" title="Revenir à la couverture composée">✕</button>
+          </div>
+        </div>
+        ${custom.wrap ? `
+        <div class="badge">PDF broché complet — 4ème + dos + 1ère</div>
+        ${custom.wrap_preview
+          ? `<img class="wrap" src="${url('wrap')}&preview=1" alt="Ma couverture broché complet"
+                  title="Aperçu extrait de votre PDF — cliquez pour l'ouvrir en grand"
+                  onclick="window.open('${url('wrap')}', '_blank')">`
+          : `<object class="pdf" data="${url('wrap')}#toolbar=0&navpanes=0&view=FitH" type="application/pdf">
+               <div class="fallback">
+                 Ce PDF est vectoriel : votre navigateur ne l'affiche pas ici —
+                 <span onclick="window.open('${url('wrap')}', '_blank')">ouvrir dans un onglet</span>.
+               </div>
+             </object>`}` : ''}
+        ${custom.front ? `
+        <div class="badge">Image de 1ère de couverture — eBook</div>
+        <img class="front" src="${url('front')}" alt="Ma 1ère de couverture">` : ''}
+      </div>`;
   }
 
   async function loadCover() {
@@ -1879,9 +1975,9 @@
    * sinon détection sur le texte — et corrigeable ici.
    */
   function langRowView() {
-    const lang = S.kdpLang;
+    const lang = S.kdpLang || S.bundle.lang;
     if (!lang) return '';
-    const langs = S.kdpLangs || [];
+    const langs = (S.kdpLangs && S.kdpLangs.length) ? S.kdpLangs : (S.bundle.langs || []);
     return `
       <div class="row lang-row">
         <label>Langue du livre
@@ -2171,26 +2267,42 @@
       input.click();
     },
 
-    setImportMode(mode) { S.importMode = mode; render(); },
-    setImportOwned(v) { S.importOwned = !!v; render(); },
+    setImportMode(mode) {
+      // On garde la consigne déjà tapée en basculant de mode
+      const field = document.getElementById('import-brief');
+      if (field) S.importBrief = field.value;
+      S.importMode = mode;
+      render();
+    },
+    setImportOwned(v) {
+      const field = document.getElementById('import-brief');
+      if (field) S.importBrief = field.value;
+      S.importOwned = !!v;
+      render();
+    },
+    setImportBrief(text) { S.importBrief = text; },
 
     async applyImport() {
       if (!S.importAnalysis) return;
       const mode = S.importMode || 'identique';
       const title = (document.getElementById('import-title') || {}).value || '';
+      const brief = (document.getElementById('import-brief') || {}).value || S.importBrief || '';
       setBusy('importap', true);
       try {
         const data = await Api.post('import/apply', {
-          id: S.project.id, mode, title, owned: S.importOwned ? 1 : 0
+          id: S.project.id, mode, title, brief, owned: S.importOwned ? 1 : 0
         });
         S.project = data.project;
         S.importAnalysis = null;
+        S.importBrief = '';
         await refreshProject();
         S.step = data.step;
         enterStep();
         toast(mode === 'identique'
           ? data.chapters + ' chapitres repris (' + nf(data.words) + ' mots) — à vous la couverture.'
-          : 'Plan importé — définissez le sommaire puis lancez la rédaction.');
+          : (data.reworked
+            ? 'Plan retravaillé selon votre consigne : ' + data.chapters + ' chapitres — vérifiez le sommaire.'
+            : 'Plan importé — définissez le sommaire puis lancez la rédaction.'));
       } catch (e) { toast(e.message, true); }
       setBusy('importap', false);
       render();
@@ -2317,6 +2429,55 @@
       if (!title || !S.bundle.toc[index]) return;
       S.bundle.toc[index].title = title;
       debounce('tocsave', () => Api.post('toc/save', { id: S.project.id, toc: S.bundle.toc }).catch(e => toast(e.message, true)));
+    },
+
+    /** Sous-partie renommée : sauvegarde différée comme pour les titres. */
+    editTocPart(index, part, text) {
+      const title = String(text || '').trim();
+      const chapter = S.bundle.toc[index];
+      if (!chapter || !Array.isArray(chapter.parts) || !title) return;
+      chapter.parts[part] = title;
+      debounce('tocsave', () => Api.post('toc/save', { id: S.project.id, toc: S.bundle.toc }).catch(e => toast(e.message, true)));
+    },
+
+    addTocPart(index) {
+      const chapter = S.bundle.toc[index];
+      if (!chapter) return;
+      chapter.parts = Array.isArray(chapter.parts) ? chapter.parts : [];
+      chapter.parts.push('Nouvelle partie');
+      render();
+      debounce('tocsave', () => Api.post('toc/save', { id: S.project.id, toc: S.bundle.toc }).catch(e => toast(e.message, true)));
+    },
+
+    removeTocPart(index, part) {
+      const chapter = S.bundle.toc[index];
+      if (!chapter || !Array.isArray(chapter.parts)) return;
+      chapter.parts.splice(part, 1);
+      render();
+      debounce('tocsave', () => Api.post('toc/save', { id: S.project.id, toc: S.bundle.toc }).catch(e => toast(e.message, true)));
+    },
+
+    /**
+     * Suppression d'un chapitre. Si le livre est déjà structuré, le texte
+     * rédigé part avec lui : on prévient explicitement avant.
+     */
+    async deleteTocChapter(index) {
+      const chapter = S.bundle.toc[index];
+      if (!chapter) return;
+      const written = Number(S.project.writing_status === 'idle' ? 0 : 1);
+      const warning = written
+        ? '\n\nAttention : si ce chapitre est déjà rédigé, son texte sera définitivement supprimé du livre.'
+        : '';
+      if (!confirm('Supprimer le chapitre « ' + chapter.title + ' » du sommaire ?' + warning)) return;
+      try {
+        const data = await Api.post('toc/delete-chapter', { id: S.project.id, index });
+        S.bundle.toc = data.toc;
+        S.project = data.project;
+        toast(data.words > 0
+          ? '« ' + data.title + ' » supprimé — ' + nf(data.words) + ' mots retirés du livre.'
+          : '« ' + data.title + ' » retiré du sommaire.');
+        render();
+      } catch (e) { toast(e.message, true); }
     },
 
     moveToc(index, delta) {
@@ -2768,13 +2929,17 @@
       } catch (e) { toast(e.message, true); }
     },
 
-    /** Correction manuelle de la langue du livre (fenêtre Publier). */
+    /**
+     * Langue du livre — même réglage partout : étape 01, paramètres de
+     * l'étape 03 et fenêtre Publier. Tout ce qui est produit ensuite en découle.
+     */
     async setBookLang(code) {
       try {
         const data = await Api.post('projects/lang', { id: S.project.id, lang: code });
+        S.bundle.lang = data.lang;
         S.kdpLang = data.lang;
-        toast('Langue du livre : ' + data.lang.fr + ' — métadonnées et libellés du livre suivront.');
-        S.modal = publishModalView(S.kdpMeta, S.tokens);
+        toast('Langue du livre : ' + data.lang.fr + ' — rédaction, couverture, métadonnées et libellés suivront.');
+        if (S.modal) S.modal = publishModalView(S.kdpMeta, S.tokens);
         render();
       } catch (e) { toast(e.message, true); }
     },

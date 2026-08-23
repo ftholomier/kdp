@@ -328,11 +328,86 @@ final class Toc
     }
 
     /**
+     * SUPPRIME un chapitre du sommaire — geste volontaire, à l'inverse de la
+     * validation qui, elle, ne détruit jamais rien. Retire l'entrée du
+     * brouillon et, si le livre est déjà structuré, le chapitre correspondant
+     * avec ses sections, son texte et ses emplacements visuels ; la numérotation
+     * (et donc la conclusion) se resserre derrière lui.
+     *
+     * @return array{title:string,words:int,live:bool,toc:array}
+     */
+    public static function deleteChapter(array $project, int $index): array
+    {
+        $projectId = (int) $project['id'];
+        $toc = array_values(self::draft($project));
+        if (!isset($toc[$index])) {
+            throw new \RuntimeException('Chapitre introuvable dans le sommaire.');
+        }
+        $entry = $toc[$index];
+        $title = trim((string) ($entry['title'] ?? ''));
+        array_splice($toc, $index, 1);
+
+        // Chapitre correspondant dans le livre structuré : d'abord par titre
+        // exact, sinon par position parmi les chapitres (hors intro/conclusion).
+        $chapters = Db::all(
+            "SELECT id, num, title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num",
+            [$projectId]
+        );
+        $target = null;
+        foreach ($chapters as $chapter) {
+            if (mb_strtolower(trim((string) $chapter['title'])) === mb_strtolower($title)) {
+                $target = $chapter;
+                break;
+            }
+        }
+        if (!$target && isset($chapters[$index])) {
+            $target = $chapters[$index];
+        }
+
+        $words = 0;
+        if ($target) {
+            $row = Db::one(
+                'SELECT COALESCE(SUM(words), 0) AS w FROM sections WHERE chapter_id = ?',
+                [(int) $target['id']]
+            );
+            $words = (int) ($row['w'] ?? 0);
+
+            $pdo = Db::pdo();
+            $pdo->beginTransaction();
+            try {
+                $num = (int) $target['num'];
+                Db::run('DELETE FROM sections WHERE chapter_id = ?', [(int) $target['id']]);
+                Db::run('DELETE FROM images WHERE project_id = ? AND chapter_num = ?', [$projectId, $num]);
+                Db::run('DELETE FROM chapters WHERE id = ?', [(int) $target['id']]);
+                // On resserre la numérotation : la conclusion remonte d'un cran.
+                Db::run('UPDATE chapters SET num = num - 1 WHERE project_id = ? AND num > ?', [$projectId, $num]);
+                Db::run('UPDATE images SET chapter_num = chapter_num - 1 WHERE project_id = ? AND chapter_num > ?', [$projectId, $num]);
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+        }
+
+        self::saveDraft($projectId, $toc);
+        Util::journal(
+            $projectId,
+            'ok',
+            'Chapitre supprimé : « ' . $title . ' »'
+                . ($words > 0 ? ' — ' . Util::nf($words) . ' mots rédigés retirés du livre' : '')
+        );
+        return ['title' => $title, 'words' => $words, 'live' => $target !== null, 'toc' => $toc];
+    }
+
+    /**
      * Validation d'un sommaire sur un livre DÉJÀ rédigé : synchronisation
      * douce. Les chapitres existants (et leur contenu) sont préservés ; les
      * entrées inconnues du brouillon deviennent de nouveaux chapitres ; si le
      * brouillon compte autant d'entrées que le livre, les écarts de titres
-     * sont traités comme des renommages. Rien n'est jamais supprimé.
+     * sont traités comme des renommages. Les SOUS-PARTIES suivent aussi :
+     * titres alignés, parties ajoutées, parties retirées uniquement quand
+     * elles sont encore vides. Aucun texte rédigé n'est jamais supprimé ici
+     * (la suppression volontaire passe par deleteChapter()).
      */
     private static function syncValidatedToc(array $project, array $toc): void
     {
@@ -377,8 +452,76 @@ final class Toc
             Util::journal($projectId, 'dim', 'Sommaire déjà à jour : contenu rédigé intact');
         }
 
+        self::syncSectionTitles($project, $toc);
         self::syncImageSlots($project, $toc);
         Db::run('UPDATE projects SET step = GREATEST(step, 4), updated_at = ? WHERE id = ?', [Db::now(), $projectId]);
+    }
+
+    /**
+     * Aligne les SOUS-PARTIES du livre sur celles du brouillon : renommages
+     * appliqués, parties ajoutées (en attente de rédaction), parties retirées
+     * seulement si elles n'ont pas encore de texte. Une section déjà rédigée
+     * n'est jamais perdue — au pire elle est renommée.
+     */
+    private static function syncSectionTitles(array $project, array $toc): void
+    {
+        $projectId = (int) $project['id'];
+        $partsByTitle = [];
+        foreach ($toc as $entry) {
+            $parts = array_values(array_filter(array_map(
+                fn ($p) => mb_substr(trim((string) $p), 0, 250),
+                (array) ($entry['parts'] ?? [])
+            ), fn ($p) => $p !== ''));
+            if ($parts) {
+                $partsByTitle[mb_strtolower(trim((string) ($entry['title'] ?? '')))] = $parts;
+            }
+        }
+        if (!$partsByTitle) {
+            return;
+        }
+
+        $renamed = 0;
+        $added = 0;
+        $dropped = 0;
+        $chapters = Db::all(
+            "SELECT id, title FROM chapters WHERE project_id = ? AND role = 'chapter' ORDER BY num",
+            [$projectId]
+        );
+        foreach ($chapters as $chapter) {
+            $parts = $partsByTitle[mb_strtolower(trim((string) $chapter['title']))] ?? null;
+            if ($parts === null) {
+                continue;
+            }
+            $sections = Db::all(
+                'SELECT id, num, title, content FROM sections WHERE chapter_id = ? ORDER BY num',
+                [(int) $chapter['id']]
+            );
+            foreach ($parts as $i => $part) {
+                if (isset($sections[$i])) {
+                    if (trim((string) $sections[$i]['title']) !== $part) {
+                        Db::run('UPDATE sections SET title = ? WHERE id = ?', [$part, (int) $sections[$i]['id']]);
+                        $renamed++;
+                    }
+                    continue;
+                }
+                Db::run(
+                    "INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,'wait')",
+                    [(int) $chapter['id'], $i + 1, $part]
+                );
+                $added++;
+            }
+            // Parties retirées du brouillon : supprimées uniquement si vides
+            foreach (array_slice($sections, count($parts)) as $extra) {
+                if (trim((string) ($extra['content'] ?? '')) === '') {
+                    Db::run('DELETE FROM sections WHERE id = ?', [(int) $extra['id']]);
+                    $dropped++;
+                }
+            }
+        }
+        if ($renamed || $added || $dropped) {
+            Util::journal($projectId, 'ok', 'Sous-parties synchronisées : ' . $renamed . ' renommée(s), '
+                . $added . ' ajoutée(s), ' . $dropped . ' vide(s) retirée(s) · texte rédigé intact');
+        }
     }
 
     /**

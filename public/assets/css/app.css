@@ -310,14 +310,31 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .toc-row .title:hover { background: var(--paper-soft); }
 .toc-row .title:focus { outline: 2px solid var(--navy); background: var(--paper-soft); }
 .toc-parts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-.toc-part { padding: 4px 9px; border-radius: 6px; background: var(--bg); font-size: 12px; color: var(--muted); }
+.toc-part { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
+  background: var(--bg); font-size: 12px; color: var(--muted); }
+.toc-part [contenteditable]:focus { outline: none; box-shadow: 0 1px 0 var(--accent); }
+.toc-part .x { cursor: pointer; color: var(--fainter); font-size: 10px; opacity: 0; transition: opacity .15s; }
+.toc-row:hover .toc-part .x { opacity: 1; }
+.toc-part .x:hover { color: var(--accent); }
+.toc-part.add { cursor: pointer; background: none; border: 1px dashed var(--line); color: var(--fainter); }
+.toc-part.add:hover { border-color: var(--accent); color: var(--accent); }
 .toc-side { flex: none; text-align: right; font-size: 12px; color: var(--fainter); font-variant-numeric: tabular-nums; }
 .toc-side .visuals { margin-top: 4px; color: var(--accent); }
 .toc-move { display: flex; flex-direction: column; gap: 2px; opacity: 0; transition: opacity .15s; }
 .toc-row:hover .toc-move { opacity: 1; }
 .toc-move span { cursor: pointer; font-size: 11px; color: var(--fainter); padding: 1px 5px; border-radius: 5px; }
 .toc-move span:hover { background: var(--chip-bg); color: var(--ink); }
+.toc-move span.del:hover { background: rgba(196,87,31,.12); color: var(--accent); }
 .toc-empty { padding: 48px 24px; text-align: center; color: var(--faint); font-size: 13.5px; }
+
+/* Langue du livre : bandeau de l'étape 01 */
+.lang-picker { display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  margin: 18px 0 4px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--paper-soft); }
+.lang-picker .t { font-size: 13.5px; font-weight: 600; }
+.lang-picker .sub { font-size: 12px; color: var(--faint); margin-top: 3px; max-width: 620px; line-height: 1.5; }
+.lang-picker select { width: auto; min-width: 190px; }
+@media (max-width: 760px) { .lang-picker { flex-direction: column; align-items: stretch; } }
 
 /* ── Étape 4 : couverture ── */
 .cover-grid { display: grid; grid-template-columns: 330px minmax(0,1fr); gap: 24px; align-items: start; }
@@ -453,6 +470,23 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .import-owned { display: flex; gap: 9px; align-items: flex-start; margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.5; cursor: pointer; }
 .import-owned input { margin-top: 2px; accent-color: var(--accent); }
 .custom-cover-note { margin-top: 9px; padding: 9px 11px; background: #EEF5EE; border: 1px solid #CFE0CF; border-radius: 8px; font-size: 11.5px; line-height: 1.5; color: #35502F; }
+.custom-cover-card { padding: 14px; margin-bottom: 14px; }
+.custom-cover-card .hd { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.custom-cover-card .t { font-size: 13.5px; font-weight: 600; }
+.custom-cover-card .sub { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+.custom-cover-card .acts { display: flex; gap: 6px; flex: none; }
+.custom-cover-card .acts .btn { padding: 6px 10px; font-size: 11.5px; }
+.custom-cover-card .badge { display: inline-block; margin: 4px 0 8px; padding: 3px 9px; border-radius: 20px;
+  background: #EEF5EE; border: 1px solid #CFE0CF; color: #35502F; font-size: 11px; }
+.custom-cover-card .pdf { display: block; width: 100%; height: 460px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--bg); }
+.custom-cover-card .front { display: block; max-width: 260px; border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(48,40,26,.22); }
+.custom-cover-card .wrap { display: block; width: 100%; border-radius: 4px; cursor: zoom-in;
+  box-shadow: 0 8px 24px rgba(48,40,26,.22); }
+.custom-cover-card .fallback { padding: 26px; text-align: center; font-size: 12.5px; color: var(--faint); }
+.custom-cover-card .fallback span { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
 .layout-composer { margin-bottom: 22px; padding: 16px 16px 10px; background: #FBF8F0; border: 1px solid var(--line); border-radius: 12px; }
 .composer-row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .composer-row:hover { background: #F4EDDD; }

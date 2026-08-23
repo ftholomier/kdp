@@ -277,6 +277,15 @@ final class Router
                 Toc::validate(self::project((int) $project['id'], $userId));
                 Http::ok(['project' => self::project((int) $project['id'], $userId)]);
 
+            case 'toc/delete-chapter':
+                // Suppression VOLONTAIRE : retire l'entrée du sommaire et, si le
+                // livre est déjà structuré, le chapitre avec son texte.
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $result = Toc::deleteChapter($project, (int) Http::in('index', -1));
+                $result['project'] = self::project((int) $project['id'], $userId);
+                Http::ok($result);
+
             case 'toc/add-chapter':
                 // « Ajoute un chapitre sur… » — à tout moment, même livre rédigé
                 Http::requirePost();
@@ -496,10 +505,58 @@ final class Router
                         @unlink($dest);
                         Http::error('Image illisible.');
                     }
+                    // Le fichier est stocké en .jpg : un PNG est réellement
+                    // converti, pour que l'aperçu et les exports soient francs.
+                    if (($info[2] ?? 0) !== IMAGETYPE_JPEG) {
+                        $src = @imagecreatefromstring((string) file_get_contents($dest));
+                        if (!$src) {
+                            @unlink($dest);
+                            Http::error('Image illisible.');
+                        }
+                        $flat = imagecreatetruecolor(imagesx($src), imagesy($src));
+                        imagefill($flat, 0, 0, imagecolorallocate($flat, 255, 255, 255));
+                        imagecopy($flat, $src, 0, 0, 0, 0, imagesx($src), imagesy($src));
+                        imagejpeg($flat, $dest, 94);
+                        imagedestroy($src);
+                        imagedestroy($flat);
+                        $info = @getimagesize($dest);
+                    }
                 }
                 Util::journal((int) $project['id'], 'ok', 'Couverture personnelle importée ('
                     . ($kind === 'wrap' ? 'PDF broché complet' : 'image de 1ère de couverture') . ') — utilisée telle quelle dans les exports.');
                 Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
+
+            case 'coverstudio/custom-file':
+                // VOTRE fichier de couverture, servi tel quel pour l'aperçu
+                // (le PDF s'affiche dans la visionneuse intégrée du navigateur).
+                $project = self::project((int) Http::in('id'), $userId);
+                $kind = Http::in('kind') === 'wrap' ? 'wrap' : 'front';
+                // ?preview=1 : aperçu image extrait du PDF, pour l'afficher
+                // dans le studio sans dépendre de la visionneuse du navigateur.
+                if ($kind === 'wrap' && Http::in('preview')) {
+                    $preview = CoverStudio::wrapPreview((int) $project['id']);
+                    if (!$preview) {
+                        Http::error('Aperçu indisponible pour ce PDF.', 404);
+                    }
+                    header('Content-Type: image/jpeg');
+                    header('Cache-Control: no-store');
+                    header('Content-Length: ' . (string) filesize($preview));
+                    readfile($preview);
+                    exit;
+                }
+                $path = CoverStudio::customCoverPath((int) $project['id'], $kind);
+                if (!is_file($path)) {
+                    Http::error('Aucune couverture importée.', 404);
+                }
+                header('Content-Type: ' . ($kind === 'wrap' ? 'application/pdf' : 'image/jpeg'));
+                header('Cache-Control: no-store');
+                header('Content-Length: ' . (string) filesize($path));
+                if (Http::in('download')) {
+                    header('Content-Disposition: attachment; filename="ma-couverture-'
+                        . (int) $project['id'] . '.' . ($kind === 'wrap' ? 'pdf' : 'jpg') . '"');
+                }
+                readfile($path);
+                exit;
 
             case 'coverstudio/clear-custom':
                 Http::requirePost();
@@ -509,6 +566,7 @@ final class Router
                         @unlink(CoverStudio::customCoverPath((int) $project['id'], $kind));
                     }
                 }
+                CoverStudio::forgetWrapPreview((int) $project['id']);
                 Http::ok(['custom' => CoverStudio::customCovers((int) $project['id'])]);
 
             case 'coverstudio/upload-ref':
@@ -782,7 +840,11 @@ final class Router
                     Http::error('Confirmez que ce livre vous appartient pour le reprendre à l\'identique.');
                 }
                 $analysis = \App\Services\BookImport::analyze($stored);
-                $result = \App\Services\BookImport::apply($project, $analysis, $mode, (string) Http::in('title', ''));
+                $result = \App\Services\BookImport::apply(
+                    $project, $analysis, $mode,
+                    (string) Http::in('title', ''),
+                    (string) Http::in('brief', '')      // votre consigne libre sur cet import
+                );
                 Http::ok($result + ['project' => self::project((int) $project['id'], $userId)]);
 
             // ── Sections : édition directe et retouche IA ──
@@ -1197,6 +1259,13 @@ final class Router
             'concepts' => Concepts::listFor($projectId),
             'toc'      => Toc::draft($project),
             'trims'    => Config::get('trims'),
+            // Langue du livre (déduite ou choisie) + langues disponibles :
+            // réglable dès l'étape 01, et de nouveau avec les paramètres du livre.
+            'lang'     => Lang::of($project),
+            'langs'    => array_map(
+                fn ($code, $l) => ['code' => $code, 'name' => $l['fr'], 'native' => $l['native'], 'store' => $l['marketplace']],
+                array_keys(Lang::LANGS), Lang::LANGS
+            ),
         ];
     }
 

@@ -268,16 +268,81 @@ final class BookImport
     }
 
     /**
-     * Applique l'analyse au projet en cours.
-     * $mode : 'identique' (contenu repris tel quel, direction la couverture)
-     *       | 'inspire'   (seul le plan est retenu ; l'IA réécrit tout)
+     * Retravaille le plan importé selon VOTRE consigne — un seul appel IA, sur
+     * les titres uniquement (jamais sur le texte : en mode inspiration il sera
+     * rédigé de toute façon à l'étape 05). Si l'IA échoue ou répond de
+     * travers, on garde le plan d'origine : l'import n'échoue jamais pour ça.
+     *
+     * @return array{toc:array,title:string}|null
      */
-    public static function apply(array $project, array $analysis, string $mode, string $title): array
+    private static function rework(array $project, array $toc, string $title, string $brief): ?array
+    {
+        $langName = Lang::promptName(Lang::codeOf($project));
+        $plan = '';
+        foreach ($toc as $i => $entry) {
+            $plan .= ($i + 1) . '. ' . $entry['title'] . "\n";
+            foreach ((array) ($entry['parts'] ?? []) as $part) {
+                $plan .= '   - ' . $part . "\n";
+            }
+        }
+
+        try {
+            $data = Gemini::json(
+                "Voici le plan d'un livre existant, importé pour servir de POINT DE DÉPART à un nouveau livre.\n"
+                . "Titre actuel : « {$title} »\n\nPLAN ACTUEL :\n{$plan}\n"
+                . "CONSIGNE DE L'AUTEUR — c'est elle qui commande :\n« {$brief} »\n\n"
+                . "Retravaille le plan pour qu'il réponde exactement à cette consigne : ajoute, retire, fusionne, "
+                . "réordonne ou reformule les chapitres autant que nécessaire. Garde 6 à 16 chapitres, "
+                . "2 à 4 sous-parties chacun, des titres concrets et vendeurs, TOUT en {$langName}.\n"
+                . 'Réponds UNIQUEMENT en JSON : {"title":"titre du nouveau livre",'
+                . '"chapters":[{"title":"…","parts":["…","…","…"]}]}',
+                ['model' => 'fast', 'temperature' => 0.7, 'timeout' => 90, 'retries' => 1,
+                 'system' => "Tu es directeur de collection. Tu structures des livres pratiques en {$langName}."]
+            );
+        } catch (\Throwable $e) {
+            Util::journal((int) $project['id'], 'warn',
+                'Plan non retravaillé (' . $e->getMessage() . ') — le plan d\'origine est conservé.');
+            return null;
+        }
+
+        $out = [];
+        foreach ((array) ($data['chapters'] ?? []) as $chapter) {
+            $chapterTitle = mb_substr(trim((string) ($chapter['title'] ?? '')), 0, 250);
+            if ($chapterTitle === '') {
+                continue;
+            }
+            $parts = [];
+            foreach ((array) ($chapter['parts'] ?? []) as $part) {
+                $part = mb_substr(trim((string) $part), 0, 120);
+                if ($part !== '') {
+                    $parts[] = $part;
+                }
+            }
+            $out[] = ['title' => $chapterTitle, 'parts' => array_slice($parts, 0, 4)];
+        }
+        if (count($out) < 4) {
+            return null;
+        }
+        $newTitle = mb_substr(trim((string) ($data['title'] ?? '')), 0, 250);
+        return ['toc' => array_slice($out, 0, 16), 'title' => $newTitle !== '' ? $newTitle : $title];
+    }
+
+    /**
+     * Applique l'analyse au projet en cours.
+     * $mode   : 'identique' (contenu repris tel quel, direction la couverture)
+     *         | 'inspire'   (seul le plan est retenu ; l'IA réécrit tout)
+     * $brief  : VOTRE consigne libre sur ce que vous voulez faire de cet import.
+     *           En « inspire », elle transforme réellement le plan (un seul appel
+     *           IA) ; dans les deux modes elle devient la ligne éditoriale du
+     *           projet, reprise ensuite par la couverture et les métadonnées.
+     */
+    public static function apply(array $project, array $analysis, string $mode, string $title, string $brief = ''): array
     {
         $projectId = (int) $project['id'];
         $identical = $mode === 'identique';
         $chapters = $analysis['chapters'];
         $title = mb_substr(trim($title) !== '' ? trim($title) : ($analysis['title_guess'] ?: 'Livre importé'), 0, 250);
+        $brief = mb_substr(trim($brief), 0, 1200);
 
         // Le sommaire du studio (brouillon) reprend le plan détecté
         $toc = [];
@@ -286,6 +351,17 @@ final class BookImport
                 'title' => $chapter['title'],
                 'parts' => array_map(fn ($s) => mb_substr($s['title'], 0, 120), $chapter['sections']),
             ];
+        }
+        // Consigne + mode inspiration : le plan est retravaillé selon votre
+        // demande avant d'atterrir dans le sommaire (titre du livre compris).
+        $reworked = false;
+        if (!$identical && $brief !== '') {
+            $adapted = self::rework($project, $toc, $title, $brief);
+            if ($adapted) {
+                $toc = $adapted['toc'];
+                $title = $adapted['title'];
+                $reworked = true;
+            }
         }
 
         $pdo = Db::pdo();
@@ -317,7 +393,10 @@ final class BookImport
                 'UPDATE projects SET title = ?, idea = ?, toc_json = ?, pages = ?, writing_status = ?, step = ?, mode = \'describe\', updated_at = ? WHERE id = ?',
                 [
                     $title,
-                    'Livre importé depuis un PDF existant — ' . count($chapters) . ' chapitres, '
+                    // Ligne éditoriale du projet : votre consigne si vous en avez
+                    // donné une, sinon le simple constat de l'import.
+                    ($brief !== '' ? $brief . "\n\n" : '')
+                        . 'Livre importé depuis un PDF existant — ' . count($chapters) . ' chapitres, '
                         . Util::nf($analysis['words_total']) . ' mots.',
                     json_encode($toc, JSON_UNESCAPED_UNICODE),
                     min(828, $pages),
@@ -348,15 +427,19 @@ final class BookImport
         Util::journal(
             $projectId,
             'ok',
-            $identical
+            ($identical
                 ? 'Livre importé À L\'IDENTIQUE : ' . count($chapters) . ' chapitres, ' . Util::nf($analysis['words_total'])
                   . ' mots repris — direction la couverture et la mise en page.'
-                : 'Plan importé pour INSPIRATION : ' . count($chapters) . ' chapitres — le contenu sera écrit par l\'IA.'
+                : 'Plan importé pour INSPIRATION : ' . count($toc) . ' chapitres — le contenu sera écrit par l\'IA.')
+            . ($brief !== '' ? ' Consigne retenue : « ' . mb_substr($brief, 0, 160) . ' »' : '')
+            . ($reworked ? ' · plan retravaillé selon votre consigne' : '')
         );
         return [
             'step'     => $identical ? 4 : 3,   // là où l'on vous emmène
-            'chapters' => count($chapters),
+            'chapters' => $identical ? count($chapters) : count($toc),
             'words'    => $analysis['words_total'],
+            'reworked' => $reworked,
+            'title'    => $title,
         ];
     }
 }

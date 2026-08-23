@@ -318,6 +318,109 @@ final class CoverImport
     }
 
     /**
+     * RECOMPOSE une planche image à la taille exigée par le livre.
+     *
+     * Le principe : les deux faces dessinées (4ème et 1ère) sont conservées et
+     * simplement remises à l'échelle du nouveau format ; c'est le DOS qui est
+     * reconstruit à sa nouvelle épaisseur — le seul élément dont la largeur
+     * dépend de la pagination. Son visuel d'origine est recentré (le texte du
+     * dos reste droit, jamais étiré) et les marges éventuelles sont comblées
+     * avec sa couleur de bord.
+     *
+     * C'est exactement ce que demande KDP quand la pagination change : même
+     * design, dos à la bonne épaisseur.
+     *
+     * @return array{w_mm:float,h_mm:float,spine_mm:float}|null
+     */
+    public static function rebuild(string $planche, array $diagnosis, string $destination): ?array
+    {
+        $detected = $diagnosis['detected'] ?? null;
+        $expected = $diagnosis['expected'] ?? null;
+        if (!$detected || !$expected) {
+            return null;
+        }
+        $panels = self::panels($planche, $diagnosis);
+        if (!$panels || empty($panels['front']) || empty($panels['back'])) {
+            return null;
+        }
+        $bleed = (float) Config::get('kdp.bleed_mm', 3.175);
+        $trims = (array) Config::get('trims', []);
+        $trim = $trims[$expected['trim']] ?? null;
+        if (!$trim) {
+            return null;
+        }
+
+        // Résolution de travail : celle de la planche d'origine
+        $srcW = (int) round(($diagnosis['w_mm'] > 0 ? imagesx($panels['back']) + imagesx($panels['front'])
+            + (isset($panels['spine']) ? imagesx($panels['spine']) : 0) : 0));
+        $dpi = $srcW > 0 ? $srcW / ($diagnosis['w_mm'] / 25.4) : 300;
+        $px = fn (float $mm): int => max(1, (int) round($mm * $dpi / 25.4));
+
+        $targetH  = $px((float) $expected['h_mm']);
+        $sideW    = $px($bleed + (float) $trim['w_mm']);
+        $spineW   = $px((float) $expected['spine_mm']);
+        $targetW  = $sideW * 2 + $spineW;
+
+        $out = imagecreatetruecolor($targetW, $targetH);
+        imagefill($out, 0, 0, imagecolorallocate($out, 255, 255, 255));
+
+        // 4ème (gauche) et 1ère (droite) : remises à l'échelle du format cible
+        imagecopyresampled($out, $panels['back'], 0, 0, 0, 0, $sideW, $targetH,
+            imagesx($panels['back']), imagesy($panels['back']));
+        imagecopyresampled($out, $panels['front'], $sideW + $spineW, 0, 0, 0, $sideW, $targetH,
+            imagesx($panels['front']), imagesy($panels['front']));
+
+        // DOS : d'abord un aplat de sa couleur dominante, puis son visuel
+        // d'origine recentré — sans étirement, pour préserver son texte.
+        $spine = $panels['spine'] ?? null;
+        $fill = $spine ? self::edgeColor($spine) : self::edgeColor($panels['front']);
+        imagefilledrectangle($out, $sideW, 0, $sideW + $spineW - 1, $targetH - 1,
+            imagecolorallocate($out, $fill[0], $fill[1], $fill[2]));
+        if ($spine) {
+            $scale = $targetH / max(1, imagesy($spine));
+            $drawW = max(1, (int) round(imagesx($spine) * $scale));
+            $dstX = $sideW + (int) round(($spineW - $drawW) / 2);
+            $srcX = 0;
+            $copyW = $drawW;
+            if ($drawW > $spineW) {                 // dos plus fin : on recadre au centre
+                $srcX = (int) round((imagesx($spine) - $spineW / $scale) / 2);
+                $copyW = $spineW;
+                $dstX = $sideW;
+                imagecopyresampled($out, $spine, $dstX, 0, $srcX, 0, $copyW, $targetH,
+                    (int) round($spineW / $scale), imagesy($spine));
+            } else {
+                imagecopyresampled($out, $spine, $dstX, 0, 0, 0, $drawW, $targetH,
+                    imagesx($spine), imagesy($spine));
+            }
+        }
+        foreach ($panels as $im) {
+            imagedestroy($im);
+        }
+        imagejpeg($out, $destination, 94);
+        imagedestroy($out);
+
+        return [
+            'w_mm'     => (float) $expected['w_mm'],
+            'h_mm'     => (float) $expected['h_mm'],
+            'spine_mm' => (float) $expected['spine_mm'],
+        ];
+    }
+
+    /** Couleur dominante du bord gauche d'une image (remplissage du dos). */
+    private static function edgeColor(\GdImage $im): array
+    {
+        $h = imagesy($im);
+        $counts = [];
+        for ($y = 0; $y < $h; $y += max(1, (int) round($h / 60))) {
+            $c = imagecolorat($im, min(2, imagesx($im) - 1), $y);
+            $key = ($c >> 16 & 255) . ',' . ($c >> 8 & 255) . ',' . ($c & 255);
+            $counts[$key] = ($counts[$key] ?? 0) + 1;
+        }
+        arsort($counts);
+        return array_map('intval', explode(',', (string) array_key_first($counts)));
+    }
+
+    /**
      * PDF prêt pour KDP à partir d'une planche image : une seule page à la
      * taille exacte de la planche, image posée bord à bord. Permet de
      * téléverser sur KDP une couverture fournie en JPEG.

@@ -336,6 +336,9 @@ label > input, label > textarea, label > select { margin-top: 7px; font-weight: 
 .lang-picker select { width: auto; min-width: 190px; }
 @media (max-width: 760px) { .lang-picker { flex-direction: column; align-items: stretch; } }
 
+.card-actions .danger { color: var(--accent); }
+.card-actions .danger:hover { color: #A33C10; }
+
 /* ── Étape 4 : couverture ── */
 .cover-grid { display: grid; grid-template-columns: 330px minmax(0,1fr); gap: 24px; align-items: start; }
 .cover-templates { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

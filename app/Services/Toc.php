@@ -36,7 +36,12 @@ final class Toc
               . "{\"caption\":\"légende courte\",\"desc\":\"contenu précis du visuel (schéma, photo, tableau…)\"} ;\n"
             : "- pas de champ \"visuals\" ;\n";
 
-        $prompt = "Tu es directeur éditorial. Construis le sommaire d'un livre pratique en français pour Amazon KDP.\n"
+        // LANGUE DU LIVRE : un sommaire régénéré ne repasse jamais en français
+        // sur un livre anglais — la langue en cours prime, toujours.
+        $langName = Lang::promptName(Lang::codeOf($project));
+
+        $prompt = "Tu es directeur éditorial. Construis le sommaire d'un livre pratique rédigé en {$langName}, pour Amazon KDP.\n"
+            . "TOUS les titres que tu produis sont EN {$langName}.\n"
             . "Titre : « {$concept['title']} »\n"
             . "Accroche : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\n"
@@ -54,7 +59,7 @@ final class Toc
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
             'search'      => false,
-            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Réponse en français.",
+            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}.",
         ]);
 
         $chapters = $data['chapters'] ?? null;
@@ -222,7 +227,8 @@ final class Toc
         $visualSpec = $photos
             ? ",\"visuals\":[{\"caption\":\"légende courte\",\"desc\":\"contenu précis du visuel\"}] (exactement {$photosPer} entrées)"
             : '';
-        $prompt = "Tu es directeur éditorial. Un livre pratique en français est en cours :\n"
+        $langName = Lang::promptName(Lang::codeOf($project));
+        $prompt = "Tu es directeur éditorial. Un livre pratique rédigé en {$langName} est en cours :\n"
             . 'Titre : « ' . ($concept['title'] ?? $project['title']) . " »\n"
             . "Ton : {$project['tone']}.\n"
             . 'Chapitres existants : ' . ($existing ? '« ' . implode(' » · « ', array_slice($existing, 0, 20)) . ' »' : 'aucun') . "\n\n"
@@ -231,13 +237,14 @@ final class Toc
             . '{"title":"titre évocateur du chapitre (max 70 caractères, sans numérotation)",'
             . '"parts":["...","...","..."] (exactement ' . $sectionsPer . ' sous-parties courtes de 3 à 6 mots)'
             . $visualSpec . '}' . "\n"
-            . "Le chapitre doit répondre exactement à la demande de l'auteur, dans le ton du livre, sans doublonner les chapitres existants.";
+            . "Le chapitre doit répondre exactement à la demande de l'auteur, dans le ton du livre, "
+            . "sans doublonner les chapitres existants. Titre et sous-parties EN {$langName}.";
 
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => 0.8,
             'search'      => false,
-            'system'      => 'Tu construis des sommaires de livres pratiques impeccables. Réponse en français.',
+            'system'      => "Tu construis des sommaires de livres pratiques impeccables. Tu écris exclusivement en {$langName}.",
         ]);
         $title = mb_substr(trim((string) ($data['title'] ?? '')), 0, 250);
         if ($title === '') {

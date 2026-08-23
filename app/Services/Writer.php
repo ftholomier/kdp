@@ -244,6 +244,7 @@ final class Writer
     public static function retouch(array $project, array $section, string $instruction): string
     {
         $instruction = trim($instruction);
+        $langName = Lang::promptName(Lang::codeOf($project));
         if (mb_strlen($instruction) < 4) {
             throw new \RuntimeException('Précisez la retouche souhaitée (ex. : « raccourcis d\'un tiers »).');
         }
@@ -255,7 +256,7 @@ final class Writer
             . "(types autorisés : retenir, chiffre, conseil, exemple, faq, attention). Aucune autre mise en forme, pas de titres markdown.";
 
         $prompt = "Tu es directeur littéraire. Voici une section du chapitre « {$section['chapter_title']} » "
-            . "(section « {$section['title']} ») d'un livre pratique en français, ton « {$project['tone']} ».\n\n"
+            . "(section « {$section['title']} ») d'un livre pratique rédigé en {$langName}, ton « {$project['tone']} ».\n\n"
             . "TEXTE ACTUEL :\n---\n" . $current . "\n---\n\n"
             . "CONSIGNE DE L'AUTEUR (prioritaire) : « {$instruction} »\n\n"
             . "Réécris la section en appliquant précisément cette consigne, en conservant ce qui fonctionne, "
@@ -268,7 +269,7 @@ final class Writer
             'temperature' => 0.7,
             'timeout'     => 75,
             'retries'     => 0,
-            'system'      => 'Tu réécris des sections de livres pratiques impeccables, en français.',
+            'system'      => "Tu réécris des sections de livres pratiques impeccables, en {$langName}.",
         ]));
         if (Util::wordCount($text) < 60) {
             throw new \RuntimeException('Réécriture trop courte — reformulez la consigne et relancez.');
@@ -307,6 +308,7 @@ final class Writer
     public static function proofreadChapter(array $project, int $chapterNum): array
     {
         $chapter = Db::one('SELECT * FROM chapters WHERE project_id = ? AND num = ?', [(int) $project['id'], $chapterNum]);
+        $langName = Lang::promptName(Lang::codeOf($project));
         if (!$chapter) {
             throw new \RuntimeException('Chapitre introuvable.');
         }
@@ -318,14 +320,14 @@ final class Writer
         foreach ($sections as $section) {
             $blob .= "<<<SECTION {$section['num']}>>>\n" . trim((string) $section['content']) . "\n<<<FIN>>>\n\n";
         }
-        $prompt = "RELECTURE PROFESSIONNELLE du chapitre « {$chapter['title']} » d'un livre pratique français.\n"
+        $prompt = "RELECTURE PROFESSIONNELLE du chapitre « {$chapter['title']} » d'un livre pratique en {$langName}.\n"
             . "Corrige UNIQUEMENT : orthographe, grammaire, ponctuation, répétitions maladroites, transitions abruptes. "
             . "Ne change NI le fond, NI la structure, NI la longueur, NI la syntaxe des encadrés (:::type … :::) et tableaux.\n\n"
             . $blob
             . "Réponds UNIQUEMENT en JSON : {\"sections\":[{\"num\":1,\"content\":\"texte corrigé\"}, …]} — une entrée par section, texte complet.";
         $data = Gemini::json($prompt, [
             'model' => 'pro', 'temperature' => 0.2, 'timeout' => 90, 'retries' => 0,
-            'system' => 'Tu es correcteur professionnel francophone. Tu renvoies du JSON strict.',
+            'system' => "Tu es correcteur professionnel de langue {$langName}. Tu renvoies du JSON strict.",
         ]);
         $byNum = [];
         foreach ($sections as $section) {

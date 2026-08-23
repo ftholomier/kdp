@@ -210,9 +210,11 @@ final class Covers
             . "Titre : « {$concept['title']} »\nAccroche existante : « {$concept['hook']} »\n"
             . "Promesse : {$concept['description']}\nTon : {$project['tone']}.\n\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
-            . '{"tagline":"...","back_text":"...","bio":"..."}' . "\n"
+            . '{"subtitle":"...","tagline":"...","back_text":"...","bio":"..."}' . "\n"
             . "Contraintes :\n"
             . "- tous les textes sont rédigés EN {$langName}, la langue du livre ;\n"
+            . "- \"subtitle\" : SOUS-TITRE de couverture, qui précise la promesse et porte les mots-clés "
+            . "que tapent les acheteurs (max 120 caractères, sans répéter le titre) ;\n"
             . "- \"tagline\" : accroche de 1ère de couverture, une phrase percutante (max 80 caractères) ;\n"
             . "- \"back_text\" : 4ème de couverture, 3 courts paragraphes séparés par \\n\\n : le problème vécu "
             . "par le lecteur, la promesse du livre, ce qu'il contient concrètement (3 puces « • » possibles). "
@@ -227,6 +229,7 @@ final class Covers
         ]);
 
         return [
+            'subtitle'  => mb_substr(trim((string) ($data['subtitle'] ?? '')), 0, 300),
             'tagline'   => mb_substr(trim((string) ($data['tagline'] ?? '')), 0, 300),
             'back_text' => mb_substr(trim((string) ($data['back_text'] ?? '')), 0, 1500),
             'bio'       => mb_substr(trim((string) ($data['bio'] ?? '')), 0, 300),

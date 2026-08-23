@@ -126,10 +126,32 @@ final class Router
                 Http::ok(['project' => self::project((int) Http::in('id'), $userId)]);
 
             case 'projects/delete':
+                // Suppression DÉFINITIVE : le livre, son contenu et TOUS ses
+                // fichiers (couverture importée, illustrations, visuels de
+                // chapitre, PDF d'import). Rien ne doit rester à traîner.
                 Http::requirePost();
                 $project = self::project((int) Http::in('id'), $userId);
-                Db::run('DELETE FROM projects WHERE id = ?', [(int) $project['id']]);
-                Http::ok();
+                $projectId = (int) $project['id'];
+
+                $uploads = rtrim((string) Config::get('paths.uploads'), '/');
+                foreach (Db::all('SELECT filename FROM images WHERE project_id = ?', [$projectId]) as $image) {
+                    if (!empty($image['filename'])) {
+                        @unlink($uploads . '/' . basename((string) $image['filename']));
+                    }
+                }
+                // Fichiers nommés d'après le projet : couverture importée et ses
+                // panneaux, illustrations et bibliothèque, image de référence, import PDF.
+                foreach (['cover-custom-*-' . $projectId . '.*', 'cover-illus-' . $projectId . '.*',
+                          'cover-lib-' . $projectId . '-*', 'cover-ref-' . $projectId . '.*',
+                          'cover-upload-' . $projectId . '.*', 'cover-rebuild-' . $projectId . '.*',
+                          'import-' . $projectId . '.pdf'] as $pattern) {
+                    foreach (glob($uploads . '/' . $pattern) ?: [] as $file) {
+                        @unlink($file);
+                    }
+                }
+                $title = (string) $project['title'];
+                Db::run('DELETE FROM projects WHERE id = ?', [$projectId]);
+                Http::ok(['title' => $title]);
 
             case 'projects/duplicate':
                 // Nouveau livre avec la MÊME recette : format, thème, composeur,
@@ -547,6 +569,42 @@ final class Router
                 Http::ok([
                     'custom'    => CoverStudio::customCovers((int) $project['id']),
                     'diagnosis' => $diag,
+                ]);
+
+            case 'coverstudio/fix-planche':
+                // « Corriger » : la planche est RECOMPOSÉE à la taille exigée
+                // par le livre — faces conservées, dos remis à l'épaisseur qui
+                // correspond à la pagination du moment.
+                Http::requirePost();
+                @set_time_limit(180);
+                $project = self::project((int) Http::in('id'), $userId);
+                $planche = CoverStudio::customCoverPath((int) $project['id'], 'planche');
+                if (!is_file($planche)) {
+                    Http::error('Cette correction demande une planche fournie en image : un PDF ne peut pas être recomposé ici.');
+                }
+                $diag = self::customDiagnosis($project);
+                if (!$diag || !$diag['detected']) {
+                    Http::error('Planche non reconnue : impossible de la recomposer.');
+                }
+                $tmp = (string) Config::get('paths.uploads') . '/cover-rebuild-' . (int) $project['id'] . '.jpg';
+                $done = \App\Services\CoverImport::rebuild($planche, $diag, $tmp);
+                if (!$done) {
+                    Http::error('Recomposition impossible sur cette planche.');
+                }
+                // La planche corrigée remplace l'ancienne : panneaux et PDF KDP
+                // sont refabriqués dans la foulée.
+                $fresh = \App\Services\CoverImport::readImage($tmp, null, (string) $project['trim_format']);
+                $newDiag = \App\Services\CoverImport::diagnose(
+                    $fresh, $project, Layout::summary($project, null)['geometry']['pages']
+                );
+                CoverStudio::storePlanche((int) $project['id'], $tmp, $newDiag);
+                @unlink($tmp);
+                Util::journal((int) $project['id'], 'ok', 'Planche recomposée : '
+                    . number_format($done['w_mm'], 1, ',', ' ') . ' × ' . number_format($done['h_mm'], 1, ',', ' ')
+                    . ' mm, dos ' . number_format($done['spine_mm'], 1, ',', ' ') . ' mm.');
+                Http::ok([
+                    'custom'    => CoverStudio::customCovers((int) $project['id']),
+                    'diagnosis' => self::customDiagnosis(self::project((int) $project['id'], $userId)),
                 ]);
 
             case 'coverstudio/custom-info':

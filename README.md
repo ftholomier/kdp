@@ -191,8 +191,18 @@ en **PDF ou en image**, et elle remplace alors la couverture composée dans les 
 
 Le studio la **mesure** et vous dit ce qu'elle raconte : format du livre déduit de sa hauteur,
 épaisseur du dos, et donc **la pagination qu'elle suppose**. Puis il la confronte à votre livre —
-c'est ce contrôle qui évite le refus au téléversement sur KDP. Si le format ne correspond pas, un
-bouton aligne le livre sur celui de la planche.
+c'est ce contrôle qui évite le refus au téléversement sur KDP.
+
+Quand ça ne correspond pas, le studio **corrige** au lieu de se contenter d'alerter :
+
+- **Corriger la planche** (planche fournie en image) : vos deux faces sont conservées telles quelles,
+  seul le **dos est refabriqué à la bonne épaisseur** — son visuel est recentré, jamais étiré. Les
+  panneaux et le PDF pour KDP sont refaits dans la foulée.
+- **Régler le livre sur le format de la planche**, quand c'est le format qui diffère.
+- **Fixer la pagination du livre** sur celle qu'implique le dos.
+
+Le verdict est **recalculé à chaque changement de pagination définitive**, à l'étape 04 comme à
+l'étape 07 — où il apparaît dans la liste de conformité KDP.
 
 |  | Planche PDF | Planche image (JPG/PNG) |
 |---|---|---|
@@ -217,6 +227,10 @@ description, 7 mots-clés, catégories), textes de 4ᵉ de couverture, contenu A
 des sections, **et** les libellés composés dans le livre lui-même : sommaire, « Chapitre 2 »,
 mention de copyright, étiquettes des encadrés, pages de fin. Langues gérées : français,
 anglais, allemand, espagnol, italien, portugais, néerlandais (`App\Services\Lang`).
+
+**Elle ne change jamais toute seule en cours de route** : régénérer un sommaire, ajouter un
+chapitre, proposer des concepts, retoucher une section ou relire un chapitre — tout reste écrit
+dans la langue du livre.
 
 Elle est déduite toute seule, dans cet ordre :
 

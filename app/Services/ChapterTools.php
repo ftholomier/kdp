@@ -46,13 +46,15 @@ final class ChapterTools
         $projectId = (int) $project['id'];
         $data = self::chapter($projectId, $num);
         $chapter = $data['chapter'];
+        // Toute retouche reste dans la LANGUE DU LIVRE.
+        $langName = Lang::promptName(Lang::codeOf($project));
 
         if ($action === 'factcheck') {
             $full = self::fullText($data['sections']);
             $notes = Gemini::text(
-                "Voici un chapitre de livre pratique en français. Relève les affirmations factuelles "
+                "Voici un chapitre de livre pratique rédigé en {$langName}. Relève les affirmations factuelles "
                 . "(chiffres, études, faits) qui mériteraient vérification ou nuance avant publication. "
-                . "Réponds par une liste concise « – … » (max 8 points, en français). S'il n'y a rien de "
+                . "Réponds par une liste concise « – … » (max 8 points, EN {$langName}). S'il n'y a rien de "
                 . "douteux, réponds « Aucune affirmation à risque détectée. »\n\n" . $full,
                 ['model' => 'pro', 'temperature' => 0.3]
             );
@@ -82,12 +84,13 @@ final class ChapterTools
                 continue; // l'exercice s'ajoute uniquement en fin de chapitre
             }
             $text = Gemini::text(
-                $instruction . "\nContraintes : français, vouvoiement, paragraphes séparés par une ligne vide, "
+                $instruction . "\nContraintes : {$langName}, paragraphes séparés par une ligne vide, "
                 . "aucun titre, aucun markdown. IMPORTANT : conserve les encadrés délimités par une ligne "
                 . "« :::type » et une ligne « ::: » EXACTEMENT avec cette syntaxe (leur contenu peut être "
                 . "retravaillé, jamais leur délimitation).\n\nTEXTE :\n" . $section['content'],
                 ['model' => 'pro', 'temperature' => (float) Config::get('gemini.temperature_writing', 0.8),
-                 'system' => 'Tu es un éditeur littéraire exigeant. Tu retravailles le texte demandé, rien d’autre.']
+                 'system' => "Tu es un éditeur littéraire exigeant. Tu retravailles le texte demandé, rien d'autre, "
+                     . "et tu écris exclusivement en {$langName}."]
             );
             $text = trim($text);
             Db::run(

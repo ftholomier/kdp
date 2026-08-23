@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-23 · c28';
+  const BUILD = '2026-08-24 · c29';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -306,6 +306,7 @@
           <span onclick="App.duplicateProject(${p.id})" title="Nouveau livre avec les mêmes réglages (format, thème, recette de mise en page, palette)">⧉ Dupliquer</span>
           <span onclick="window.open('api.php?r=projects/export&id=${p.id}', '_blank')" title="Sauvegarde complète du projet (JSON, images incluses)">⬇ Sauvegarder</span>
           ${p.writing_status === 'done' && !p.translate_from ? `<span onclick="App.translateProject(${p.id})" title="Créer la version étrangère : structure et couverture traduites, chaque section traduite à l'étape 05">🌍 Traduire</span>` : ''}
+          <span class="danger" onclick="App.deleteProject(${p.id}, ${JSON.stringify(String(p.title))})" title="Supprimer définitivement ce livre et tous ses fichiers">🗑 Supprimer</span>
         </div>
       </div>`).join('');
 
@@ -945,7 +946,7 @@
           </div>
 
           <button class="btn btn-soft" style="width:100%; margin-top:16px;" onclick="App.generateBackText()" ${S.busy.back ? 'disabled' : ''}>
-            ${S.busy.back ? '<span class="spinner"></span> Rédaction…' : '✦ Générer les textes (accroche, 4ème, bio)'}
+            ${S.busy.back ? '<span class="spinner"></span> Rédaction…' : '✦ Générer les textes (sous-titre, accroche, 4ème, bio)'}
           </button>
           <button class="btn btn-ghost" style="width:100%; margin-top:8px;" onclick="window.open('api.php?r=coverstudio/front&id=${S.project.id}&download=1', '_blank')">
             Télécharger la 1ère de couv (JPG eBook 1600×2560)
@@ -1050,9 +1051,27 @@
               <span>Dos <strong>${mm(d.detected.spine_mm)}</strong> ≈ ${nf(d.detected.pages)} pages</span>` : ''}
             <span>Attendu pour ce livre <strong>${mm(d.expected.w_mm)} × ${mm(d.expected.h_mm)}</strong> (${nf(d.expected.pages)} p., dos ${mm(d.expected.spine_mm)})</span>
           </div>
-          ${d.verdict === 'attention' && d.detected && d.detected.trim !== d.expected.trim ? `
-          <button class="btn btn-soft" style="padding:7px 12px; font-size:12px; margin-top:10px; width:auto;"
-                  onclick="App.adoptCoverTrim('${esc(d.detected.trim)}')">Régler mon livre sur le format ${esc(d.detected.trim_name || d.detected.trim)}</button>` : ''}
+          ${d.verdict !== 'ok' ? `
+          <div class="fixes">
+            ${custom.planche ? `
+            <button class="btn btn-primary" onclick="App.fixPlanche()" ${S.busy.fixcov ? 'disabled' : ''}>
+              ${S.busy.fixcov ? '<span class="spinner"></span> Recomposition…'
+                : '🛠 Corriger la planche pour ' + nf(d.expected.pages) + ' pages'}
+            </button>` : ''}
+            ${d.detected && d.detected.trim !== d.expected.trim ? `
+            <button class="btn btn-soft" onclick="App.adoptCoverTrim('${esc(d.detected.trim)}')">
+              Régler mon livre sur le format ${esc(d.detected.trim_name || d.detected.trim)}
+            </button>` : ''}
+            ${d.detected && d.detected.pages && d.detected.pages !== d.expected.pages ? `
+            <button class="btn btn-soft" onclick="App.adoptCoverPages(${Number(d.detected.pages)})">
+              Fixer la pagination du livre à ${nf(d.detected.pages)} pages
+            </button>` : ''}
+          </div>
+          <div class="faint" style="font-size:11px; margin-top:7px; line-height:1.5;">
+            ${custom.planche
+              ? 'La correction conserve vos deux faces et refabrique le dos à la bonne épaisseur. Elle se relance à chaque fois que vous changez la pagination définitive.'
+              : 'Un PDF ne peut pas être recomposé ici : réexportez-le depuis votre outil aux dimensions ci-dessus, ou envoyez la planche en JPG/PNG pour que le studio la corrige lui-même.'}
+          </div>` : ''}
         </div>` : ''}
 
         ${visual}
@@ -1071,6 +1090,28 @@
   }
 
   /** Diagnostic de la planche importée (dimensions, dos, conformité). */
+  /**
+   * Conformité de la couverture IMPORTÉE, rappelée à l'étape 07 : c'est ici
+   * qu'on fige la pagination définitive, donc ici que le dos peut cesser de
+   * correspondre. Le verdict se recalcule à chaque changement de pagination.
+   */
+  function coverConformityRow() {
+    const custom = S.coverCustom;
+    const d = S.coverDiagnosis;
+    if (!custom || !custom.any || !d) return '';
+    const ok = d.verdict === 'ok';
+    return `
+      <div class="check-row">
+        <span class="ic ${ok ? 'ok' : 'warn'}">${ok ? '✓' : '!'}</span>
+        <div>
+          <div class="l">Couverture importée ${ok ? 'conforme' : 'à corriger'}</div>
+          <div class="n">${esc(d.message)}
+            ${!ok ? `<span style="color:var(--accent); cursor:pointer; white-space:nowrap;" onclick="App.goStep(4)"> → corriger à l'étape 04</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
   async function loadCoverDiagnosis() {
     if (!S.coverCustom || !S.coverCustom.any) { S.coverDiagnosis = null; return; }
     try {
@@ -1579,6 +1620,7 @@
           <span class="ic ${c.state}">${c.state === 'ok' ? '✓' : '!'}</span>
           <div><div class="l">${esc(c.label)}</div><div class="n">${esc(c.note)}</div></div>
         </div>`).join('')}
+        ${coverConformityRow()}
 
         <div class="publish-card">
           <div class="t">Prêt à publier</div>
@@ -1606,6 +1648,14 @@
         await reloadInteriorThemes();
         render();
       }
+      // État de la couverture importée : la pagination définitive se règle
+      // aussi ici, son verdict doit donc être connu à l'étape 07.
+      try {
+        const info = await Api.get('coverstudio/custom-info', { id: S.project.id });
+        S.coverCustom = info.custom;
+        S.coverDiagnosis = info.diagnosis;
+        render();
+      } catch (e) { /* pas de couverture importée : rien à signaler */ }
     } catch (e) { toast(e.message, true); }
   }
 
@@ -1997,13 +2047,19 @@
     }
 
     function syncTexts(texts) {
+      let changed = false;
       (S.editorEls || []).forEach(el => {
-        if (el.type === 'text' && ['title', 'tagline', 'subtitle'].includes(el.id) && texts[el.id] !== undefined) {
+        if (el.type === 'text' && ['title', 'tagline', 'subtitle'].includes(el.id)
+            && texts[el.id] !== undefined && el.text !== texts[el.id]) {
           el.text = texts[el.id];
+          changed = true;
           const node = stage && stage.querySelector('.ed-el[data-id="' + el.id + '"] .ed-text-inner');
           if (node) node.textContent = el.text;
         }
       });
+      // Sans cette sauvegarde, le texte revenait à l'ancien au rechargement :
+      // ce sont les ÉLÉMENTS qui font foi pour le rendu de la couverture.
+      if (changed) save();
     }
 
     return { init, syncTexts };
@@ -2637,6 +2693,35 @@
       input.click();
     },
 
+    /** Recompose la planche importée à la taille exigée par le livre. */
+    async fixPlanche() {
+      setBusy('fixcov', true);
+      try {
+        const data = await Api.post('coverstudio/fix-planche', { id: S.project.id });
+        S.coverCustom = data.custom;
+        S.coverDiagnosis = data.diagnosis;
+        S.coverStamp = Date.now();
+        toast(data.diagnosis && data.diagnosis.verdict === 'ok'
+          ? 'Planche recomposée — elle correspond maintenant à votre livre.'
+          : 'Planche recomposée. ' + (data.diagnosis ? data.diagnosis.message : ''));
+      } catch (e) { toast(e.message, true); }
+      setBusy('fixcov', false);
+      render();
+    },
+
+    /** Aligner la pagination du livre sur celle qu'implique la planche. */
+    async adoptCoverPages(pages) {
+      try {
+        await Api.post('projects/update', { id: S.project.id, final_pages: pages });
+        S.project.final_pages = pages;
+        await loadCoverDiagnosis();
+        const data = await Api.get('covers/get', { id: S.project.id });
+        S.coverGeometry = data.geometry;
+        toast('Pagination fixée à ' + nf(pages) + ' pages — dos et planche réanalysés.');
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
     /** Aligner le livre sur le format détecté dans la planche importée. */
     async adoptCoverTrim(trim) {
       try {
@@ -2751,12 +2836,17 @@
       setBusy('back', true);
       try {
         const data = await Api.post('covers/generate-back', { id: S.project.id });
+        S.cover.texts.subtitle = data.generated.subtitle || S.cover.texts.subtitle;
         S.cover.texts.tagline = data.generated.tagline || S.cover.texts.tagline;
         S.cover.texts.back_text = data.generated.back_text || S.cover.texts.back_text;
         S.cover.texts.bio = data.generated.bio || S.cover.texts.bio;
         await Api.post('covers/save', { id: S.project.id, template: S.cover.template, palette: S.cover.palette, texts: S.cover.texts });
+        // Les textes remontent aussi dans les ÉLÉMENTS de l'éditeur : sans cela
+        // le sous-titre restait dans la fiche sans jamais apparaître sur la couverture.
+        Editor.syncTexts(S.cover.texts);
       } catch (e) { toast(e.message, true); }
       setBusy('back', false);
+      render();
       injectCoverPreviews();
     },
 
@@ -2906,6 +2996,26 @@
 
     next6() { S.step = 7; enterStep(); render(); window.scrollTo(0, 0); },
 
+    /**
+     * Suppression d'un livre : définitive, donc confirmée deux fois — la
+     * seconde en retapant le titre, comme pour tout geste irréversible.
+     */
+    async deleteProject(id, title) {
+      if (!confirm('Supprimer définitivement « ' + title + ' » ?\n\nLe texte, la couverture, les visuels et les fichiers importés seront effacés. Cette action est irréversible.')) return;
+      const typed = prompt('Pour confirmer, recopiez le titre du livre :', '');
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== String(title).trim().toLowerCase()) {
+        toast('Titre non conforme — suppression annulée.', true);
+        return;
+      }
+      try {
+        await Api.post('projects/delete', { id });
+        await loadProjects();
+        toast('« ' + title + ' » supprimé.');
+        render();
+      } catch (e) { toast(e.message, true); }
+    },
+
     async duplicateProject(projectId) {
       try {
         const data = await Api.post('projects/duplicate', { id: projectId });
@@ -3012,6 +3122,9 @@
           S.coverGeometry = data.geometry;
           render();
         }
+        // La planche importée est jugée sur la pagination du moment : son
+        // verdict (et donc le bouton « Corriger ») se recalcule aussitôt.
+        await loadCoverDiagnosis();
         toast(S.project.final_pages
           ? 'Pagination forcée à ' + S.project.final_pages + ' pages — dos recalculé pour les exports.'
           : 'Retour à l\'estimation automatique de la pagination.');

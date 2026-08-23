@@ -41,14 +41,19 @@ final class Concepts
             error_log('[canopy] concepts : ' . $e->getMessage());
         }
 
-        $prompt = "Tu es directeur éditorial spécialisé en autoédition Amazon KDP France.\n"
+        // LANGUE DU LIVRE : les titres proposés deviennent le titre du livre,
+        // ils doivent donc être écrits dans sa langue, pas dans celle du studio.
+        $lang = Lang::of($project);
+        $langName = Lang::promptName($lang['code']);
+
+        $prompt = "Tu es directeur éditorial spécialisé en autoédition Amazon KDP, boutique {$lang['marketplace']}.\n"
             . "Thématique retenue : « {$theme['name']} » ({$theme['category']}).\n"
             . $ideaLine
             . $realData
             . "Analyse ce qui se vend le mieux dans cette niche sur Amazon.fr (top 100, avis négatifs, "
             . "angles morts, prix) et propose 8 LIVRES À ÉCRIRE, chacun comblant un angle mort réel des "
             . "meilleures ventes" . ($grounded ? " — en particulier des titres réels listés ci-dessus" : '')
-            . ". Titres accrocheurs en français, commercialement solides.\n\n"
+            . ". Titres accrocheurs EN {$langName}, commercialement solides — comme tous les textes que tu produis ici.\n\n"
             . "Réponds UNIQUEMENT avec un objet JSON valide :\n"
             . '{"books":[{"title":"...","short_title":"...","hook":"...","description":"...","badge":"...",'
             . '"competition":"...","price":"14,90 €","pages_est":184}]}' . "\n"
@@ -67,7 +72,7 @@ final class Concepts
         $data = Gemini::json($prompt, [
             'model'       => 'fast',
             'temperature' => (float) Config::get('gemini.temperature_ideas', 0.9),
-            'system'      => "Tu produis des concepts éditoriaux vendeurs et réalistes pour Amazon.fr. Réponse en français.",
+            'system'      => "Tu produis des concepts éditoriaux vendeurs et réalistes pour {$lang['marketplace']}. Tu écris exclusivement en {$langName}.",
         ]);
 
         $books = $data['books'] ?? null;

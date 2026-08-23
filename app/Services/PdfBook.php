@@ -50,6 +50,46 @@ final class PdfBook
     ];
 
     /**
+     * POLICES DE L'INTÉRIEUR proposées au choix (étape 07). Toutes sont
+     * embarquées dans app/fonts et incorporées au PDF, comme l'exige KDP.
+     * 'body' doit rester lisible à 10 pt et posséder un italique ; 'title'
+     * sert aux titres de chapitre et aux têtes de section.
+     * slug => [libellé, fichier, italique|null, rôle]
+     */
+    public const INTERIOR_FONTS = [
+        // Texte courant
+        'instrument-serif' => ['Instrument Serif — élégante, classique', 'InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', 'body'],
+        'lora'             => ['Lora — serif chaleureuse, très lisible',  'Lora.ttf',                    'Lora-Italic.ttf',            'body'],
+        'playfair'         => ['Playfair Display — contrastée, chic',     'PlayfairDisplay.ttf',         'PlayfairDisplay-Italic.ttf', 'body'],
+        'instrument-sans'  => ['Instrument Sans — sans serif sobre',      'InstrumentSans.ttf',          null,                         'body'],
+        'montserrat'       => ['Montserrat — sans serif ronde',           'Montserrat-Regular.ttf',      null,                         'body'],
+        'nunito'           => ['Nunito — sans serif douce',               'Nunito-Regular.ttf',          null,                         'body'],
+        // Titres
+        'bebas'            => ['Bebas Neue — capitales serrées',          'BebasNeue.ttf',               null,                         'title'],
+        'oswald'           => ['Oswald — condensée, affirmée',            'Oswald.ttf',                  null,                         'title'],
+        'abril'            => ['Abril Fatface — grasse, éditoriale',      'AbrilFatface.ttf',            null,                         'title'],
+        'dm-serif'         => ['DM Serif Display — serif de titrage',     'DMSerifDisplay.ttf',          'DMSerifDisplay-Italic.ttf',  'title'],
+        'poppins'          => ['Poppins — géométrique, nette',            'Poppins-SemiBold.ttf',        null,                         'title'],
+        'montserrat-bold'  => ['Montserrat SemiBold — ronde, moderne',    'Montserrat-SemiBold.ttf',     null,                         'title'],
+        'josefin'          => ['Josefin Sans — fine, graphique',          'JosefinSans-SemiBold.ttf',    null,                         'title'],
+        'nunito-bold'      => ['Nunito SemiBold — douce, amicale',        'Nunito-SemiBold.ttf',         null,                         'title'],
+    ];
+
+    /**
+     * Polices choisies pour l'intérieur : slug vide = celle du thème.
+     * @return array{title:string,body:string}
+     */
+    public static function interiorFonts(array $project): array
+    {
+        $saved = json_decode((string) ($project['interior_fonts'] ?? ''), true);
+        $pick = function (string $key, string $role) use ($saved): string {
+            $slug = (string) ($saved[$key] ?? '');
+            return (isset(self::INTERIOR_FONTS[$slug]) && self::INTERIOR_FONTS[$slug][3] === $role) ? $slug : '';
+        };
+        return ['title' => $pick('title', 'title'), 'body' => $pick('body', 'body')];
+    }
+
+    /**
      * COULEURS effectives de l'intérieur : celles choisies à l'étape 07 si
      * elles existent, sinon celles de la COUVERTURE (accent = c2, encre = c4
      * quand elle est assez sombre pour du texte). Le livre reste ainsi
@@ -219,6 +259,25 @@ final class PdfComposer
         // recto/verso dans newPage().
         $pdf = new MiniPdf($this->w + $this->bleedPt, $this->h + 2 * $this->bleedPt);
         $fonts = APP_ROOT . '/app/fonts/';
+
+        // VOS polices (étape 07) d'abord : un alias déjà pris n'est plus
+        // réattribué, les défauts du thème ci-dessous ne s'appliquent donc
+        // qu'aux alias laissés libres.
+        $chosen = PdfBook::interiorFonts($this->project);
+        if ($chosen['body'] !== '') {
+            [, $file, $italic] = PdfBook::INTERIOR_FONTS[$chosen['body']];
+            $pdf->addTtf('body', $fonts . $file);
+            $pdf->addTtf('italic', $fonts . ($italic ?: $file));
+        }
+        if ($chosen['title'] !== '') {
+            [, $file] = PdfBook::INTERIOR_FONTS[$chosen['title']];
+            $pdf->addTtf($this->titleFont, $fonts . $file);
+            // Le moteur premium titre avec sansFont() : même police pour lui
+            if ($this->isPremium()) {
+                $pdf->addTtf($this->sansFont(), $fonts . $file);
+            }
+        }
+
         $pdf->addTtf('body', $fonts . 'InstrumentSerif-Regular.ttf');
         $pdf->addTtf('italic', $fonts . 'InstrumentSerif-Italic.ttf');
         $pdf->addTtf('label', $fonts . 'IBMPlexMono-Medium.ttf');
@@ -234,6 +293,7 @@ final class PdfComposer
             $pdf->addTtf('sans2', $fonts . 'Montserrat-SemiBold.ttf');
             $pdf->addTtf('sans2r', $fonts . 'Montserrat-Regular.ttf');
         }
+
         return $pdf;
     }
 
@@ -401,7 +461,16 @@ final class PdfComposer
                 $this->pdf->text($left, $y, 'label', 9, $prefix, 0, 0, $this->accent);
             }
             $titleX = $left + 26;
-            $titleText = $this->fitOneLine($chapter['title'], 'body', 11.5, $right - $titleX - $pageW - 34);
+            // Un titre trop long passe à la ligne (2 maximum) : les points de
+            // conduite et le folio suivent la DERNIÈRE ligne, comme dans un
+            // sommaire imprimé. Plus de titre coupé en plein mot.
+            $titleW = $right - $titleX - $pageW - 34;
+            $titleLines = array_slice($this->wrapText((string) $chapter['title'], 'body', 11.5, $titleW), 0, 2);
+            foreach (array_slice($titleLines, 0, -1) as $line) {
+                $this->pdf->text($titleX, $y, 'body', 11.5, $line);
+                $y += 16;
+            }
+            $titleText = (string) end($titleLines);
             $this->pdf->text($titleX, $y, 'body', 11.5, $titleText);
 
             // Points de conduite
@@ -548,11 +617,18 @@ final class PdfComposer
                     break;
                 }
                 $y += 10;
-                $this->centerText($y, $this->titleFont, 12.5, $this->fitOneLine((string) $item['title'], $this->titleFont, 12.5, $width));
-                $y += 15;
+                // Un titre de livre se lit en entier : il s'enroule sur deux
+                // lignes plutôt que d'être coupé par des points de suspension.
+                foreach (array_slice($this->wrapText((string) $item['title'], $this->titleFont, 12.5, $width), 0, 2) as $line) {
+                    $this->centerText($y, $this->titleFont, 12.5, $line);
+                    $y += 15;
+                }
                 if (!empty($item['subtitle'])) {
-                    $this->centerText($y, 'italic', 9.5, $this->fitOneLine((string) $item['subtitle'], 'italic', 9.5, $width), $this->gray);
-                    $y += 14;
+                    foreach (array_slice($this->wrapText((string) $item['subtitle'], 'italic', 9.5, $width), 0, 2) as $line) {
+                        $this->centerText($y, 'italic', 9.5, $line, $this->gray);
+                        $y += 12.5;
+                    }
+                    $y += 2;
                 }
             }
         };
@@ -616,8 +692,12 @@ final class PdfComposer
         $flow = [];
         foreach ($blocks as $block) {
             $kind = (string) ($block['kind'] ?? '');
-            $fullWidth = ($block['t'] ?? 'p') === 'call'
-                && (($kind === 'chiffre' && $this->opt('bignum')) || ($kind === 'retenir' && $this->opt('bands')));
+            $type = (string) ($block['t'] ?? 'p');
+            // Un TABLEAU passe en pleine largeur : à 2 ou 3 colonnes, ses
+            // cellules deviennent illisibles et il se coupe en plein milieu.
+            $fullWidth = ($type === 'table' && $this->premiumCols > 1)
+                || ($type === 'call'
+                    && (($kind === 'chiffre' && $this->opt('bignum')) || ($kind === 'retenir' && $this->opt('bands'))));
             if ($fullWidth) {
                 if ($flow) {
                     $segments[] = ['flow', $flow];
@@ -636,9 +716,14 @@ final class PdfComposer
         foreach ($segments as $segment) {
             if ($segment[0] === 'full') {
                 $y = $this->endRegion($y);
-                $y = (string) $segment[1]['kind'] === 'chiffre'
-                    ? $this->premiumStat($y, (string) $segment[1]['text'])
-                    : $this->premiumBand($y, (string) $segment[1]['kind'], (string) $segment[1]['text']);
+                $block = $segment[1];
+                if (($block['t'] ?? 'p') === 'table') {
+                    $y = $this->gridSnap($this->table($y, (array) $block['head'], (array) $block['rows']));
+                } else {
+                    $y = (string) $block['kind'] === 'chiffre'
+                        ? $this->premiumStat($y, (string) $block['text'])
+                        : $this->premiumBand($y, (string) $block['kind'], (string) $block['text']);
+                }
                 $firstSegment = false;
                 continue;
             }
@@ -888,21 +973,42 @@ final class PdfComposer
         $left = $this->colX();
         $width = $this->colWidth();
         $y += 10;
+        // Titre long : il passe à la ligne (2 maximum) au lieu d'être tronqué.
+        $lines = function (string $font, float $size, float $w) use ($title): array {
+            return array_slice($this->wrapText($title, $font, $size, $w), 0, 2);
+        };
+        $extra = 0.0;
         switch ($this->opener) {
             case 'band':
-                $this->pdf->rectRgb($left, $y - 8, 3, 14, $this->accent);
-                $this->pdf->text($left + 10, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $width - 10));
+                $set = $lines('sans', 11.5, $width - 10);
+                $this->pdf->rectRgb($left, $y - 8, 3, 8 + 14 * count($set) - 8, $this->accent);
+                foreach ($set as $i => $line) {
+                    $this->pdf->text($left + 10, $y + 3 + $i * 14, 'sans', 11.5, $line);
+                }
+                $extra = 14 * (count($set) - 1);
                 break;
             case 'number':
-                $this->pdf->text($left, $y + 3, 'sans', 11.5, $this->fitOneLine($title, 'sans', 11.5, $width), 0, 0, $this->accentDark());
+                $set = $lines('sans', 11.5, $width);
+                foreach ($set as $i => $line) {
+                    $this->pdf->text($left, $y + 3 + $i * 14, 'sans', 11.5, $line, 0, 0, $this->accentDark());
+                }
+                $extra = 14 * (count($set) - 1);
                 break;
             case 'centered':
-                $this->centerText($y + 3, 'display2', 12.5, $this->fitOneLine($title, 'display2', 12.5, $width * 0.9));
+                $set = $lines('display2', 12.5, $width * 0.9);
+                foreach ($set as $i => $line) {
+                    $this->centerText($y + 3 + $i * 15, 'display2', 12.5, $line);
+                }
+                $extra = 15 * (count($set) - 1);
                 break;
             default:
-                $this->pdf->text($left, $y + 3, 'body', 13, $this->fitOneLine($title, 'body', 13, $width));
+                $set = $lines('body', 13, $width);
+                foreach ($set as $i => $line) {
+                    $this->pdf->text($left, $y + 3 + $i * 15, 'body', 13, $line);
+                }
+                $extra = 15 * (count($set) - 1);
         }
-        return $y + 24;
+        return $y + 24 + $extra;
     }
 
     /**
@@ -944,8 +1050,11 @@ final class PdfComposer
         // Têtes composées décochées : simple titre + petit filet accent
         if (!$this->opt('sectionnum')) {
             $y += 16;
-            $t = $this->fitOneLine($title, $sans, 13, $width);
-            $this->pdf->text($left, $y + 3, $sans, 13, $t);
+            $set = array_slice($this->wrapText($title, $sans, 13, $width), 0, 2);
+            foreach ($set as $i => $line) {
+                $this->pdf->text($left, $y + 3 + $i * 16, $sans, 13, $line);
+            }
+            $y += 16 * (count($set) - 1);
             if ($soft) {
                 $this->pdf->roundRectRgb($left, $y + 10, 20, 2.6, 1.3, $this->accent);
             } else {
@@ -960,10 +1069,10 @@ final class PdfComposer
                 $y += 20;
                 if ($soft) {
                     $this->pdf->roundRectRgb($left, $y - 6, 34, 7, 3.5, $this->accent);
-                    $this->pdf->text($left + 44, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
+                    $this->pdf->text($left + 44, $y + 1, $lbl, 7.5, mb_strtoupper($this->t('section')) . ' ' . $numText, 0, 2.6, $this->accentDark());
                 } else {
                     $this->pdf->rectRgb(-$this->bleedPt, $y - 7, max(10.0, $left - 9) + $this->bleedPt, 9, $this->accent);
-                    $this->pdf->text($left, $y + 1, $lbl, 7.5, 'SECTION ' . $numText, 0, 2.6, $this->accentDark());
+                    $this->pdf->text($left, $y + 1, $lbl, 7.5, mb_strtoupper($this->t('section')) . ' ' . $numText, 0, 2.6, $this->accentDark());
                 }
                 $y += 30;
                 foreach ($this->wrapText($title, $sans, 17, $width) as $line) {
@@ -980,8 +1089,12 @@ final class PdfComposer
                 } else {
                     $this->pdf->rectRgb($left, $y - 7.5, 8.5, 8.5, $this->accent);
                 }
-                $t = $this->fitOneLine($title, $sans, 11.5, $width * 0.72);
-                $this->pdf->text($left + 16, $y + 0.5, $sans, 11.5, $t);
+                $set = array_slice($this->wrapText($title, $sans, 11.5, $width * 0.72), 0, 2);
+                foreach ($set as $i => $line) {
+                    $this->pdf->text($left + 16, $y + 0.5 + $i * 14, $sans, 11.5, $line);
+                }
+                $t = (string) end($set);
+                $y += 14 * (count($set) - 1);
                 $tEnd = $left + 16 + $this->pdf->width($t, $sans, 11.5);
                 if ($tEnd + 14 < $left + $width) {
                     if ($soft) {
@@ -1064,7 +1177,8 @@ final class PdfComposer
         } else {
             $this->pdf->rectRgb($left, $y - 2, 30, 2.6, $this->accent);
         }
-        $this->pdf->text($left, $y + 13, $this->labelFont(), 7.2, 'CHIFFRE CLÉ', 0, 2.4, $this->accentDark());
+        $this->pdf->text($left, $y + 13, $this->labelFont(), 7.2,
+            mb_strtoupper($this->calloutLabels()['chiffre'] ?? 'Chiffre'), 0, 2.4, $this->accentDark());
         $this->pdf->text($left, $y + 18 + $size * 0.92, $sans, $size, $big, 0, 0, $this->accent);
         $ty = $y + 18;
         foreach ($lines as $line) {
@@ -1129,32 +1243,40 @@ final class PdfComposer
      */
     private function table(float $y, array $head, array $rows): float
     {
-        $left = $this->colX();
-        $width = $this->colWidth();
         $cols = max(2, count($head));
-        $cellW = $width / $cols;
         $pad = 5.0;
         $size = 8.2;
         $lineH = 11.0;
         $sans = in_array($this->opener, ['number', 'band'], true) ? 'sans' : ($this->isPremium() ? $this->sansFont() : 'label');
 
+        // ATTENTION : la colonne courante peut changer en cours de tableau (une
+        // ligne qui ne tient plus déclenche un passage à la colonne suivante).
+        // Position et largeur sont donc relues À CHAQUE LIGNE — les figer au
+        // départ faisait dessiner la suite du tableau par-dessus le texte de la
+        // colonne précédente.
+        $cellW = fn (): float => $this->colWidth() / $cols;
+
         $rowHeight = function (array $cells, string $font, float $fs) use ($cols, $cellW, $pad, $lineH): array {
             $wrapped = [];
             $lines = 1;
+            $w = $cellW();
             for ($i = 0; $i < $cols; $i++) {
-                $wrapped[$i] = $this->wrapText(trim((string) ($cells[$i] ?? '')), $font, $fs, $cellW - 2 * $pad);
+                $wrapped[$i] = $this->wrapText(trim((string) ($cells[$i] ?? '')), $font, $fs, $w - 2 * $pad);
                 $lines = max($lines, count($wrapped[$i]));
             }
             return [$wrapped, $lines * $lineH + 2 * $pad];
         };
-        $drawRow = function (float $y, array $wrapped, float $h, ?array $bg, string $font, float $fs, ?array $fg) use ($cols, $cellW, $pad, $lineH, $left, $width): float {
+        $drawRow = function (float $y, array $wrapped, float $h, ?array $bg, string $font, float $fs, ?array $fg) use ($cellW, $pad, $lineH): float {
+            $left = $this->colX();
+            $width = $this->colWidth();
+            $w = $cellW();
             if ($bg !== null) {
                 $this->pdf->rectRgb($left, $y, $width, $h, $bg);
             }
             foreach ($wrapped as $i => $lines) {
                 $ty = $y + $pad + $fs * 0.85;
                 foreach ($lines as $line) {
-                    $this->pdf->text($left + $i * $cellW + $pad, $ty, $font, $fs, $line, 0, 0, $fg);
+                    $this->pdf->text($left + $i * $w + $pad, $ty, $font, $fs, $line, 0, 0, $fg);
                     $ty += $lineH;
                 }
             }
@@ -1163,13 +1285,19 @@ final class PdfComposer
         };
 
         [$headWrapped, $headH] = $rowHeight($head, $sans, 7.6);
-        $y = $this->ensureRoom($y, $headH + 3 * $lineH + 24);
+        // De quoi poser l'en-tête ET une première ligne : un en-tête seul en
+        // bas de colonne n'a aucun sens.
+        $y = $this->ensureRoom($y, $headH + 2 * $lineH + 20);
         $y += 8;
         $y = $drawRow($y, $headWrapped, $headH, $this->accentSoft, $sans, 7.6, $this->accentDark());
         foreach ($rows as $cells) {
             [$wrapped, $h] = $rowHeight((array) $cells, 'body', $size);
             if ($y + $h > $this->colBottom()) {
                 $y = $this->breakColumn();
+                // En-tête répété en tête de la NOUVELLE colonne : hauteur
+                // recalculée à sa largeur, qui peut différer.
+                [$headWrapped, $headH] = $rowHeight($head, $sans, 7.6);
+                [$wrapped, $h] = $rowHeight((array) $cells, 'body', $size);
                 $y = $drawRow($y + 4, $headWrapped, $headH, $this->accentSoft, $sans, 7.6, $this->accentDark());
             }
             $y = $drawRow($y, $wrapped, $h, null, 'body', $size, null);

@@ -8,7 +8,7 @@
 
   // Numéro de build — affiché dans ⚡ Connecteurs pour vérifier que la bonne
   // version est bien chargée (utile en cas de cache navigateur récalcitrant).
-  const BUILD = '2026-08-23 · c27';
+  const BUILD = '2026-08-23 · c28';
 
   const STEPS = ['Niche', 'Concept', 'Sommaire', 'Couverture', 'Rédaction', 'Chapitres', 'Mise en page'];
   const TONES = ['Pratique et direct', 'Chaleureux', 'Analytique', 'Narratif'];
@@ -1110,6 +1110,8 @@
     S.layoutOptions = themes.options || [];
     S.layoutColors = themes.colors || null;
     S.coverPaletteRef = themes.cover_palette || {};
+    S.interiorFonts = themes.fonts || [];
+    S.interiorFontsChosen = themes.fonts_chosen || { title: '', body: '' };
   }
 
   async function loadCoverVariants() {
@@ -1505,6 +1507,31 @@
             <input type="checkbox" ${o.on ? 'checked' : ''} onchange="App.toggleLayoutOpt('${esc(o.key)}', this.checked)">
             <span class="k">${esc(o.name)}</span>
           </label>`).join('')}
+        </div>` : ''}
+
+        ${(S.interiorFonts || []).length ? `
+        <div class="layout-composer" style="margin-bottom:22px;">
+          <div class="title" style="margin-bottom:4px;">🔤 Polices du livre</div>
+          <div class="sub" style="margin-bottom:12px;">
+            Titres et texte courant. « Celle du thème » garde la police d'origine du style choisi.
+            Toutes sont incorporées au PDF, comme l'exige KDP.
+          </div>
+          <div style="display:grid; gap:12px;">
+            <label>Titres (chapitres, sections)
+              <select onchange="App.setInteriorFont('title', this.value)">
+                <option value="">Celle du thème</option>
+                ${S.interiorFonts.filter(f => f.role === 'title').map(f => `
+                <option value="${esc(f.slug)}" ${S.interiorFontsChosen.title === f.slug ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+              </select>
+            </label>
+            <label>Texte courant
+              <select onchange="App.setInteriorFont('body', this.value)">
+                <option value="">Celle du thème</option>
+                ${S.interiorFonts.filter(f => f.role === 'body').map(f => `
+                <option value="${esc(f.slug)}" ${S.interiorFontsChosen.body === f.slug ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
         </div>` : ''}
 
         <div class="layout-composer" style="margin-bottom:22px;">
@@ -2914,6 +2941,18 @@
         render();
         const t = (S.interiorThemes || []).find(x => x.slug === slug);
         toast('Mise en page « ' + ((t && t.name) || slug) + ' » appliquée — l\'aperçu se recompose.');
+      } catch (e) { toast(e.message, true); }
+    },
+
+    /** Police de l'intérieur : titres ou texte courant. */
+    async setInteriorFont(role, slug) {
+      const chosen = Object.assign({ title: '', body: '' }, S.interiorFontsChosen || {});
+      chosen[role] = slug;
+      try {
+        const data = await Api.post('interior/fonts', { id: S.project.id, title: chosen.title, body: chosen.body });
+        S.interiorFontsChosen = data.fonts;
+        S.layoutStamp = Date.now();      // l'aperçu PDF se recompose
+        render();
       } catch (e) { toast(e.message, true); }
     },
 

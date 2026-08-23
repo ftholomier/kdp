@@ -129,12 +129,16 @@ final class Toc
             Db::run('DELETE FROM chapters WHERE project_id = ?', [$projectId]);
             Db::run('DELETE FROM images WHERE project_id = ?', [$projectId]);
 
+            // Introduction et conclusion : titres composés par le studio, donc
+            // écrits dans la LANGUE DU LIVRE (Lang::labels).
+            $labels = Lang::labels(Lang::codeOf($project));
+
             // Introduction (belle page avant le chapitre 1)
             $introId = Db::insert(
                 "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
-                [$projectId, 1, 'intro', 'Introduction', (int) round($perChapter * 0.6)]
+                [$projectId, 1, 'intro', $labels['intro'], (int) round($perChapter * 0.6)]
             );
-            foreach (['Ce que ce livre va changer pour vous', 'Comment tirer le meilleur de ce livre'] as $s => $title) {
+            foreach ([$labels['intro_s1'], $labels['intro_s2']] as $s => $title) {
                 Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$introId, $s + 1, $title]);
             }
 
@@ -167,9 +171,9 @@ final class Toc
             // Conclusion (synthèse + plan d'action)
             $conclusionId = Db::insert(
                 "INSERT INTO chapters (project_id, num, role, title, target_words, status) VALUES (?,?,?,?,?,'wait')",
-                [$projectId, count($toc) + 2, 'conclusion', 'Conclusion', (int) round($perChapter * 0.5)]
+                [$projectId, count($toc) + 2, 'conclusion', $labels['conclusion'], (int) round($perChapter * 0.5)]
             );
-            foreach (["L'essentiel à emporter", 'Votre plan d\'action'] as $s => $title) {
+            foreach ([$labels['concl_s1'], $labels['concl_s2']] as $s => $title) {
                 Db::run('INSERT INTO sections (chapter_id, num, title, status) VALUES (?,?,?,\'wait\')', [$conclusionId, $s + 1, $title]);
             }
 

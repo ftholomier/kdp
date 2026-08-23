@@ -31,6 +31,8 @@ final class Migrations
         // Langue du livre : gouverne les métadonnées Amazon ET les libellés
         // composés dans le PDF/ePub (sommaire, encadrés, pages de fin).
         self::ensureColumn('projects', 'lang', "VARCHAR(5) NULL AFTER tone");
+        // Polices de l'intérieur choisies à l'étape 07 : {"title":"…","body":"…"}
+        self::ensureColumn('projects', 'interior_fonts', 'VARCHAR(80) NULL AFTER interior_colors');
     }
 
     private static function ensureColumn(string $table, string $column, string $definition): void

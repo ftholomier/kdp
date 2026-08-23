@@ -979,6 +979,12 @@ final class Router
                     // Couleurs du livre + palette de la couverture (référence)
                     'colors'        => $colors,
                     'cover_palette' => array_intersect_key($coverPalette, array_flip(['c1', 'c2', 'c3', 'c4'])),
+                    // Polices de l'intérieur : catalogue + choix en cours
+                    'fonts'         => array_values(array_map(
+                        fn ($slug, $def) => ['slug' => $slug, 'label' => $def[0], 'role' => $def[3]],
+                        array_keys(PdfBook::INTERIOR_FONTS), PdfBook::INTERIOR_FONTS
+                    )),
+                    'fonts_chosen'  => PdfBook::interiorFonts($project),
                     // Composeur : ingrédients de mise en page + état coché
                     'options' => array_map(fn ($key, $meta) => [
                         'key'  => $key,
@@ -1016,6 +1022,23 @@ final class Router
                         array_keys(Lang::LANGS), Lang::LANGS
                     ),
                 ]);
+
+            case 'interior/fonts':
+                // Polices de l'intérieur : titres et texte courant
+                Http::requirePost();
+                $project = self::project((int) Http::in('id'), $userId);
+                $wanted = [];
+                foreach (['title', 'body'] as $role) {
+                    $slug = (string) Http::in($role, '');
+                    if (isset(PdfBook::INTERIOR_FONTS[$slug]) && PdfBook::INTERIOR_FONTS[$slug][3] === $role) {
+                        $wanted[$role] = $slug;
+                    }
+                }
+                Db::run(
+                    'UPDATE projects SET interior_fonts = ?, updated_at = ? WHERE id = ?',
+                    [$wanted ? json_encode($wanted, JSON_UNESCAPED_UNICODE) : null, Db::now(), (int) $project['id']]
+                );
+                Http::ok(['fonts' => PdfBook::interiorFonts(self::project((int) $project['id'], $userId))]);
 
             case 'projects/lang':
                 // Correction manuelle de la langue : le livre entier suit
